@@ -1,0 +1,18 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+        <RepoSrcPath>$(RepoRoot)src</RepoSrcPath>
+        <RepoApiPath>$(RepoRoot)src/apis</RepoApiPath>
+        <RepoCommonPath>$(RepoRoot)src/common</RepoCommonPath>
+        <RepoWorkerPath>$(RepoRoot)src/workers</RepoWorkerPath>
+    </PropertyGroup>
+
+    <!-- Setup default project properties -->
+    <PropertyGroup>
+        <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+        <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
+        <PlatformName Condition="'$(PlatformName)' == ''">$(Platform)</PlatformName>
+    </PropertyGroup>
+
+    <Import Project="$(RepoRoot)\common.props" />
+</Project>

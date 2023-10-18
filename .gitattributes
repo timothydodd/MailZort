@@ -1,0 +1,23 @@
+###############################################################################
+# Set default behavior to automatically normalize line endings.
+###############################################################################
+* text=auto
+*.sh text eol=lf
+
+*.bmp binary
+*.dll binary
+*.gif binary
+*.jpg binary
+*.png binary
+*.snk binary
+*.exe binary
+*.wmv binary
+*.mp4 binary
+*.ismv binary
+*.isma binary
+
+*.cs text diff=csharp
+*.csproj text=auto
+*.sln text=auto eol=crlf
+*.sh text=auto eol=lf
+
