@@ -12,20 +12,6 @@ MailZort is a .NET 7 worker project designed to run in a Docker container, funct
 - Runs as a .NET 7 worker project in a Docker container.
 - Ideal for handling email categorization and organization tasks.
 
-### Prerequisites
-
-Before you can use MailZort, you need to have the following dependencies installed:
-
-- [.NET 7](https://dotnet.microsoft.com/download/dotnet/7.0)
-
-### Installation
-
-1. Clone the MailZort repository to your local machine:
-
-   ```bash
-   git clone https://github.com/your-username/mailzort.git
-
-
 
 ##Configuration
 MailZort requires a configuration file named appSettings.json. Here's an example of a configuration file:
