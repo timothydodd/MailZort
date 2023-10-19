@@ -6,16 +6,11 @@ MailZort is a .NET 7 worker project designed to run in a Docker container, funct
 - Emails get cached in an SQLite database thats put in the `data` folder in execution directory
 - Appsetting.json file in the project gets copied to `data` folder in execution directory
 
-## Table of Contents
-
-
 ## Features
 
 - Automatically sorts incoming emails based on a flexible configuration.
 - Runs as a .NET 7 worker project in a Docker container.
 - Ideal for handling email categorization and organization tasks.
-
-## Getting Started
 
 ### Prerequisites
 
@@ -31,7 +26,7 @@ Before you can use MailZort, you need to have the following dependencies install
    git clone https://github.com/your-username/mailzort.git
 
 
-#Usage
+
 ##Configuration
 MailZort requires a configuration file named appSettings.json. Here's an example of a configuration file:
 
@@ -84,4 +79,54 @@ MailZort requires a configuration file named appSettings.json. Here's an example
 
 
 
+```
+
+## Kubernetes
+
+K3 Manifest
+``` yaml
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mailzort
+spec:
+  schedule: "*/5 * * * *" # Runs every 5 minutes
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mailzort
+              image: timdoddcool/mailzort:1.0
+              imagePullPolicy: IfNotPresent
+              volumeMounts:
+                - name: mailzort-volume
+                  mountPath: /app/data
+              env:
+                - name: EmailSettings__Server
+                  value: "myserver"
+                - name: EmailSettings__Port
+                  value: "993"
+                - name: EmailSettings__UserName
+                  value: myuser
+                - name: EmailSettings__Password
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysecretref
+                      key: password
+                - name: EmailSettings__UseSsl
+                  value: "true"
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: mailbrute
+          volumes:
+            - name: mailzort-volume
+              nfs:
+                server: 192.168.1.51
+                path: /volume1/docker/mailzort
+                readOnly: no
 ```
