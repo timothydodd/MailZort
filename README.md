@@ -13,7 +13,8 @@ MailZort is a .NET 7 worker project designed to run in a Docker container, funct
 - Ideal for handling email categorization and organization tasks.
 
 
-##Configuration
+## Configuration
+
 MailZort requires a configuration file named appSettings.json. Here's an example of a configuration file:
 
 ``` json
