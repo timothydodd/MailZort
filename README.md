@@ -109,7 +109,7 @@ spec:
                   value: "true"
           restartPolicy: Never
           imagePullSecrets:
-            - name: mailbrute
+            - name: mysecretref
           volumes:
             - name: mailzort-volume
               nfs:
