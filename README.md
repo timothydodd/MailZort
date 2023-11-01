@@ -117,3 +117,10 @@ spec:
                 path: /volume1/docker/mailzort
                 readOnly: no
 ```
+
+## notes
+```bash 
+docker build -t mail-zort -f Dockerfile.arm64 .
+docker tag mail-zort timdoddcool/mailzort:v3-arm64
+docker push timdoddcool/mailzort:v3-arm64
+```
