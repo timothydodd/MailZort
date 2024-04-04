@@ -2,7 +2,6 @@
 
 using System.Data;
 using System.Reflection;
-using MailKit;
 using MailZort;
 using MailZort.Services;
 using ServiceStack;
@@ -96,14 +95,14 @@ public class Email
     public string SenderName { get; set; }
     public string SenderEmailaddress { get; set; }
     [Index]
-    public UniqueId Id { get; set; }
+    public uint Id { get; set; }
     [Index]
     public DateTimeOffset Date { get; set; }
     public string Subject { get; set; }
     public string TextBody { get; set; }
     public string HtmlBody { get; set; }
 
-    public Email(string senderName, string senderEmailaddress, UniqueId id, string subject, string body,
+    public Email(string senderName, string senderEmailaddress, uint id, string subject, string body,
         string htmlBody, string folder, DateTimeOffset date)
     {
         SenderName = senderName;
@@ -150,7 +149,7 @@ public class RuleTrigger
 {
     public string? From { get; set; }
     public string? To { get; set; }
-    public UniqueId Id { get; set; }
+    public uint? Id { get; set; }
 }
 public enum LookIn
 {

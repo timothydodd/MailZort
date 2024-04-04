@@ -246,7 +246,10 @@ internal class MailProcessor
                 };
                 moveTos.Add(moveTo);
             }
-            moveTo.UniqueIds.Add(trigger.Id);
+            if (trigger.Id.HasValue)
+            {
+                moveTo.UniqueIds.Add(new UniqueId(trigger.Id.Value));
+            }
         }
 
         using IDbConnection dbc = _mailDb.GetConnection();
@@ -274,7 +277,7 @@ internal class MailProcessor
                         {
                             try
                             {
-                                _ = dbc.Update<Email>(new { sm.Folder }, x => x.Id == uid);
+                                _ = dbc.Update<Email>(new { sm.Folder }, x => x.Id == uid.Id);
                             }
                             catch (Exception e)
                             {

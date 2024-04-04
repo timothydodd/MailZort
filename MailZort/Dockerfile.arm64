@@ -6,7 +6,7 @@ RUN dotnet restore
 
 # Copy the remaining source code and build the application.
 COPY . ./
-RUN dotnet publish -c Release -o out -r linux-arm64 --self-contained=false
+RUN dotnet publish -c Release -o out -r linux-arm64 --self-contained=true
 
 # Build the runtime image.
 FROM mcr.microsoft.com/dotnet/runtime:7.0-jammy-arm64v8 AS runtime

@@ -125,7 +125,7 @@ internal class MailClient
             results.Add(new Email(
                 senderNames,
                 senderAddress,
-                uniqueId,
+                uniqueId.Id,
                 message.Subject,
                 message.TextBody,
                 message.HtmlBody, inbox.Name,
