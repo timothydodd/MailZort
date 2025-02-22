@@ -1,11 +1,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /src/MailZort
+WORKDIR /src
 
-COPY *.csproj ./
-RUN dotnet restore
+COPY ["MailZort/MailZort.csproj", "MailVoidApi/"]
+
+RUN dotnet restore "./MailZort/MailZort.csproj"
 
 # Copy the remaining source code and build the application.
-COPY . ./
+COPY . .
+WORKDIR "/src/MailZort"
 RUN dotnet publish -c Release -o /app/out
 
 # Build the runtime image.
