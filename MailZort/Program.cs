@@ -94,6 +94,7 @@ public class Email
     [Index]
     public string SenderName { get; set; }
     public string SenderEmailaddress { get; set; }
+    [PrimaryKey]
     [Index]
     public uint Id { get; set; }
     [Index]
