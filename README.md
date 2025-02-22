@@ -1,6 +1,6 @@
 # MailZort
 
-MailZort is a .NET 7 worker project designed to run in a Docker container, functioning as a scheduled job. It connects to a configured email folder and sorts incoming mail based on user-defined rules. I use it with Kubernetes cron jobs Manifest below,
+MailZort is a .NET 9 worker project designed to run in a Docker container, functioning as a scheduled job. It connects to a configured email folder and sorts incoming mail based on user-defined rules. I use it with Kubernetes cron jobs Manifest below,
 
 ## Notes
 - Emails get cached in an SQLite database thats put in the `data` folder in execution directory
@@ -9,7 +9,7 @@ MailZort is a .NET 7 worker project designed to run in a Docker container, funct
 ## Features
 
 - Automatically sorts incoming emails based on a flexible configuration.
-- Runs as a .NET 7 worker project in a Docker container.
+- Runs as a .NET 9 worker project in a Docker container.
 - Ideal for handling email categorization and organization tasks.
 
 
