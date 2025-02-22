@@ -2,7 +2,7 @@ name: Build and Deploy to DockerHub
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 jobs:
   build-and-deploy:
