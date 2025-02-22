@@ -1,5 +1,5 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /src
+WORKDIR /src/MailZort
 
 COPY *.csproj ./
 RUN dotnet restore
