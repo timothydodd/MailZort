@@ -1,124 +1,93 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
-using System.Data;
-using System.Reflection;
 using MailZort;
 using MailZort.Services;
 using ServiceStack;
-using ServiceStack.DataAnnotations;
-using ServiceStack.OrmLite;
 
 internal class Program
 {
-    private static ServiceProvider? _serviceProvider;
-
-    private static IConfigurationRoot? _configuration;
-
-    private static void Configure()
+    static async Task Main(string[] args)
     {
         SettingsHelper settingHelper = new();
-
         IConfigurationBuilder builder = new ConfigurationBuilder()
-                      .SetBasePath(settingHelper.SettingPath)
-                      .AddJsonFile("appsettings.json", true, true)
-                      .AddEnvironmentVariables();
-
-
+             .SetBasePath(settingHelper.SettingPath)
+          .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+          .AddEnvironmentVariables();
 
         builder = builder.AddUserSecrets<Program>();
-        _configuration = builder.Build();
-        IServiceCollection services = new ServiceCollection()
-      .AddSingleton<IServiceProvider>(c => _serviceProvider);
 
-        services.AddLogging(configure => configure.AddSimpleConsole(options =>
-         {
-             options.IncludeScopes = false;
-             options.SingleLine = true;
-             options.TimestampFormat = "hh:mm:ss ";
-         }));
-        services.AddSingleton(x => _configuration.GetSection("EmailSettings").Get<EmailSettings>());
+        IConfiguration configuration = builder.Build();
 
-        services.AddSingleton(x => settingHelper);
-        services.AddSingleton<MailProcessor>();
-        services.AddSingleton<MailClient>();
-        services.AddSingleton<MailDb>();
+        var host = Host.CreateDefaultBuilder(args)
+            .ConfigureAppConfiguration((context, config) =>
+            {
+                // Use the configuration we already built
+                config.AddConfiguration(configuration);
+            })
+            .ConfigureServices((context, services) =>
+            {
+                var rules = context.Configuration.GetSection("Rules")?.Get<IEnumerable<Rule>>()?.Where(x => x.IsEnabled).ToList();
 
+                if (rules.Any())
+                {
+                    services.AddSingleton(rules);
+                }
+                // Bind email configuration from appsettings.json
+                var emailConfig = new EmailSettings();
+                context.Configuration.GetSection("EmailSettings").Bind(emailConfig);
+                services.AddSingleton(emailConfig);
+                services.AddSingleton<MailDb>();
+                services.AddSingleton<IBatchRuleProcessor, BatchRuleProcessor>();
+                services.AddSingleton<IEmailMover, EmailMover>();
+                services.AddSingleton<IEmailHandler, EmailHandler>();
+                services.AddSingleton<RuleMatcher>();
+                services.AddSingleton(x => settingHelper);
+                // Register the background service
+                services.AddHostedService<EmailMonitoringService>();
 
-        _serviceProvider = services.BuildServiceProvider();
+                // Register your email handler service
+                services.AddSingleton<IEmailHandler, EmailHandler>();
+            })
+            .ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Information);
+            })
+            .Build();
 
-    }
-    private static void Main(string[] args)
-    {
-        Configure();
-        if (_serviceProvider is null)
+        // Get services and wire up events
+        var emailService = host.Services.GetServices<IHostedService>()
+                       .OfType<EmailMonitoringService>()
+                       .FirstOrDefault();
+
+        var emailHandler = host.Services.GetRequiredService<IEmailHandler>();
+
+        if (emailService != null)
         {
-            throw new Exception("Service Provider is null");
+            emailService.EmailReceived += emailHandler.HandleEmailReceived;
+            emailService.ProcessingProgress += emailHandler.HandleProcessingProgress;
+
+            // Wire up the new batch processing event if the handler supports it
+            if (emailHandler is EmailHandler batchEmailHandler)
+            {
+                batchEmailHandler.BatchProcessingCompleted += (sender, args) =>
+                {
+                    emailHandler.HandleBatchProcessing(sender, args);
+                };
+            }
+
+            Console.WriteLine("✅ Event handlers wired up successfully");
         }
-        if (_configuration is null)
+        else
         {
-            throw new Exception("Configuration is null");
-        }
-        Version? AssemblyVersion = Assembly.GetExecutingAssembly()?.GetName()?.Version;
-
-        ILogger<Program> logger = _serviceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation($"MailZort Version: {AssemblyVersion}");
-
-
-        MailProcessor mailProcessor = _serviceProvider.GetRequiredService<MailProcessor>();
-        EmailSettings mailSettings = _serviceProvider.GetRequiredService<EmailSettings>();
-
-        var rules = _configuration.GetSection("Rules")?.Get<IEnumerable<Rule>>()?.Where(x => x.IsEnabled)?.ToList();
-        logger.LogInformation($"Rules Loaded: {rules?.Count}");
-        if (mailSettings.PullMails)
-        {
-            MailClient mailClientService = _serviceProvider.GetRequiredService<MailClient>();
-            mailClientService.GetMessages(rules);
-
-
-        }
-        List<RuleTrigger>? triggers = rules == null ? new List<RuleTrigger>() : mailProcessor.RunRules(rules);
-        if (!mailSettings.TestMode)
-        {
-            logger.LogInformation($"Emails Found for Filtering {triggers.Count}");
-            mailProcessor.RunTriggers(triggers);
+            Console.WriteLine("⚠️ EmailMonitoringService not found - events not wired");
         }
 
+        Console.WriteLine("Starting email monitoring service...");
+        Console.WriteLine("Press Ctrl+C to stop the service.");
 
-    }
-}
-
-public class Email
-{
-    [Index]
-    public string Folder { get; set; }
-    [Index]
-    public string SenderName { get; set; }
-    public string SenderEmailaddress { get; set; }
-    [PrimaryKey]
-    [Index]
-    public uint Id { get; set; }
-    [Index]
-    public DateTimeOffset Date { get; set; }
-    public string Subject { get; set; }
-    public string TextBody { get; set; }
-    public string HtmlBody { get; set; }
-
-    public Email(string senderName, string senderEmailaddress, uint id, string subject, string body,
-        string htmlBody, string folder, DateTimeOffset date)
-    {
-        SenderName = senderName;
-        SenderEmailaddress = senderEmailaddress;
-        Id = id;
-        Subject = subject;
-        TextBody = body;
-        HtmlBody = htmlBody;
-        Folder = folder;
-        Date = date;
-    }
-
-    public override string ToString()
-    {
-        return $"{nameof(SenderName)}: {SenderName}, {nameof(SenderEmailaddress)}: {SenderEmailaddress}, {nameof(Id)}: {Id}, {nameof(Subject)}: {Subject}";
+        await host.RunAsync();
     }
 }
 
@@ -137,20 +106,20 @@ public class Rule
 public class EmailSettings
 {
     public string? Trash { get; set; }
-    public bool PullMails { get; set; }
-    public bool TestMode { get; set; } = true;
-    public string? SearchMode { get; set; }
     public string? Server { get; set; }
     public string? Username { get; set; }
     public string? Password { get; set; }
     public int Port { get; set; }
     public bool UseSsl { get; set; }
+    public bool StoreMovedMessages { get; set; } = true;
+    public int BatchProcessingIntervalSeconds { get; set; } = 60; // Default to 60 seconds
 }
 public class RuleTrigger
 {
-    public string? From { get; set; }
-    public string? To { get; set; }
-    public uint? Id { get; set; }
+    public required string From { get; set; }
+    public required string To { get; set; }
+    public required uint Id { get; set; }
+    public required Email Email { get; set; }
 }
 public enum LookIn
 {
@@ -191,4 +160,33 @@ public class Stats
         _logger.LogInformation($"Updated Files: {FilesUpdated}");
         _logger.LogInformation($"Deleted Files: {FilesDeleted}");
     }
+}
+
+public class EmailReceivedEventArgs : EventArgs
+{
+    public string From { get; set; } = string.Empty;
+    public string SenderName { get; set; } = string.Empty;
+    public string SenderAddress { get; set; } = string.Empty;
+    public string Subject { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public bool IsExisting { get; set; }
+    public int MessageIndex { get; set; }
+    public DateTime ReceivedDate { get; set; }
+    public string Folder { get; set; } = string.Empty;
+    public uint UniqueId { get; set; } // UID from IMAP server
+}
+
+public class ProcessingProgressEventArgs : EventArgs
+{
+    public int CurrentIndex { get; set; }
+    public int TotalCount { get; set; }
+    public bool IsComplete { get; set; }
+    public double PercentComplete => TotalCount > 0 ? (double)CurrentIndex / TotalCount * 100 : 0;
+}
+public class BatchProcessingEventArgs : EventArgs
+{
+    public int EmailsProcessed { get; set; }
+    public int RulesMatched { get; set; }
+    public int EmailsMoved { get; set; }
+    public TimeSpan ProcessingTime { get; set; }
 }
