@@ -42,6 +42,8 @@ internal class Program
                 services.AddSingleton<IEmailHandler, EmailHandler>();
                 services.AddSingleton<RuleMatcher>();
                 services.AddSingleton(x => settingHelper);
+                services.AddSingleton<EmailMoveQueue>(); // Singleton to share state
+                services.AddSingleton<IEmailMoveQueue>(provider => provider.GetService<EmailMoveQueue>()!);
                 // Register the background service
                 services.AddHostedService<EmailMonitoringService>();
 

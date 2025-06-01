@@ -1,11 +1,6 @@
-﻿using System.Data;
-using MailKit;
-using MailKit.Net.Imap;
-using MailKit.Security;
-using ServiceStack.OrmLite;
+﻿namespace MailZort.Services;
 
-namespace MailZort.Services;
-
+// Simplified EmailMover that uses the queue service
 public interface IEmailMover
 {
     Task ExecuteTriggersAsync(List<RuleTrigger> triggers);
@@ -14,14 +9,12 @@ public interface IEmailMover
 public class EmailMover : IEmailMover
 {
     private readonly ILogger<EmailMover> _logger;
-    private readonly MailDb _mailDb;
-    private readonly EmailSettings _config;
+    private readonly IEmailMoveQueue _moveQueue;
 
-    public EmailMover(ILogger<EmailMover> logger, MailDb mailDb, EmailSettings config)
+    public EmailMover(ILogger<EmailMover> logger, IEmailMoveQueue moveQueue)
     {
         _logger = logger;
-        _mailDb = mailDb;
-        _config = config;
+        _moveQueue = moveQueue;
     }
 
     public async Task ExecuteTriggersAsync(List<RuleTrigger> triggers)
@@ -32,30 +25,33 @@ public class EmailMover : IEmailMover
             return;
         }
 
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var groupedTriggers = GroupTriggersByFolder(triggers);
+        var queuedOperations = 0;
 
-        using var mailClient = new ImapClient();
-        using var dbConnection = _mailDb.GetConnection();
+        foreach (var (sourceFolder, moveTos) in groupedTriggers)
+        {
+            foreach (var moveTo in moveTos)
+            {
+                if (moveTo.Emails.Any())
+                {
+                    var moveOperation = new EmailMoveOperation
+                    {
+                        SourceFolder = sourceFolder,
+                        DestinationFolder = moveTo.Folder,
+                        Emails = moveTo.Emails
+                    };
 
-        try
-        {
-            await ConnectToImapAsync(mailClient);
-            await ProcessGroupedTriggersAsync(mailClient, dbConnection, groupedTriggers);
+                    _moveQueue.QueueMoveOperation(moveOperation);
+                    queuedOperations++;
+                }
+            }
+        }
 
-            stopwatch.Stop();
-            _logger.LogInformation("✅ Moved {TriggerCount} emails in {ElapsedMs}ms",
-                triggers.Count, stopwatch.ElapsedMilliseconds);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error executing email triggers");
-            throw;
-        }
-        finally
-        {
-            await DisconnectImapAsync(mailClient);
-        }
+        _logger.LogInformation("📋 Queued {OperationCount} move operations for {EmailCount} emails",
+            queuedOperations, triggers.Count);
+
+        // Optional: Wait a bit to ensure the monitoring service processes the queue
+        await Task.Delay(100);
     }
 
     private Dictionary<string, List<MoveTo>> GroupTriggersByFolder(List<RuleTrigger> triggers)
@@ -84,111 +80,8 @@ public class EmailMover : IEmailMover
 
         return grouped;
     }
-
-    private async Task ConnectToImapAsync(ImapClient mailClient)
-    {
-        await mailClient.ConnectAsync(_config.Server, _config.Port, SecureSocketOptions.SslOnConnect);
-        await mailClient.AuthenticateAsync(_config.Username, _config.Password);
-    }
-
-    private async Task ProcessGroupedTriggersAsync(
-        ImapClient mailClient,
-        IDbConnection dbConnection,
-        Dictionary<string, List<MoveTo>> groupedTriggers)
-    {
-        foreach (var (folderName, moveTos) in groupedTriggers)
-        {
-            await ProcessFolderAsync(mailClient, dbConnection, folderName, moveTos);
-        }
-    }
-
-    private async Task ProcessFolderAsync(
-        ImapClient mailClient,
-        IDbConnection dbConnection,
-        string folderName,
-        List<MoveTo> moveTos)
-    {
-        try
-        {
-            var sourceFolder = mailClient.GetFolder(folderName);
-            await sourceFolder.OpenAsync(FolderAccess.ReadWrite);
-
-            foreach (var moveTo in moveTos)
-            {
-                await ProcessMoveOperationAsync(mailClient, dbConnection, sourceFolder, moveTo);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing folder {FolderName}", folderName);
-            throw;
-        }
-    }
-
-    private async Task ProcessMoveOperationAsync(
-        ImapClient mailClient,
-        IDbConnection dbConnection,
-        IMailFolder sourceFolder,
-        MoveTo moveTo)
-    {
-        if (!moveTo.Emails.Any())
-        {
-            return;
-        }
-
-        try
-        {
-            var destinationFolder = GetDestinationFolder(mailClient, moveTo.Folder);
-            var indexes = moveTo.Emails.Select(e => e.MessageIndex).ToList();
-
-            await sourceFolder.MoveToAsync(indexes, destinationFolder);
-            SaveEmailsToDatabase(dbConnection, moveTo.Emails);
-
-            _logger.LogInformation("📁 Moved {Count} emails to {Folder}",
-                moveTo.Emails.Count, moveTo.Folder);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error moving emails to folder {Folder}", moveTo.Folder);
-            throw;
-        }
-    }
-
-    private IMailFolder GetDestinationFolder(ImapClient mailClient, string folderName)
-    {
-        if (string.Equals(folderName, "trash", StringComparison.CurrentCultureIgnoreCase))
-        {
-            return mailClient.Capabilities.HasFlag(ImapCapabilities.SpecialUse)
-                ? mailClient.GetFolder(SpecialFolder.Trash)
-                : mailClient.GetFolder(_config.Trash);
-        }
-
-        return mailClient.GetFolder(folderName);
-    }
-
-    private void SaveEmailsToDatabase(IDbConnection dbConnection, List<Email> emails)
-    {
-        foreach (var email in emails)
-        {
-            try
-            {
-                dbConnection.Insert(email);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error saving email {MessageIndex} to database", email.MessageIndex);
-            }
-        }
-    }
-
-    private async Task DisconnectImapAsync(ImapClient mailClient)
-    {
-        if (mailClient.IsConnected)
-        {
-            await mailClient.DisconnectAsync(true);
-        }
-    }
 }
+
 public class MoveTo
 {
     public string Folder { get; set; } = string.Empty;
