@@ -3,26 +3,26 @@
 // Simplified EmailMover that uses the queue service
 public interface IEmailMover
 {
-    Task ExecuteTriggersAsync(List<RuleTrigger> triggers);
+    Task<List<EmailMoveOperation>> ExecuteTriggersAsync(List<RuleTrigger> triggers);
 }
 
 public class EmailMover : IEmailMover
 {
     private readonly ILogger<EmailMover> _logger;
-    private readonly IEmailMoveQueue _moveQueue;
 
-    public EmailMover(ILogger<EmailMover> logger, IEmailMoveQueue moveQueue)
+    public EmailMover(ILogger<EmailMover> logger)
     {
         _logger = logger;
-        _moveQueue = moveQueue;
+
     }
 
-    public async Task ExecuteTriggersAsync(List<RuleTrigger> triggers)
+    public async Task<List<EmailMoveOperation>> ExecuteTriggersAsync(List<RuleTrigger> triggers)
     {
+        List<EmailMoveOperation> ops = new List<EmailMoveOperation>();
         if (!triggers.Any())
         {
             _logger.LogDebug("No triggers to execute");
-            return;
+            return ops;
         }
 
         var groupedTriggers = GroupTriggersByFolder(triggers);
@@ -41,7 +41,7 @@ public class EmailMover : IEmailMover
                         Emails = moveTo.Emails
                     };
 
-                    _moveQueue.QueueMoveOperation(moveOperation);
+                    ops.Add(moveOperation);
                     queuedOperations++;
                 }
             }
@@ -50,8 +50,7 @@ public class EmailMover : IEmailMover
         _logger.LogInformation("📋 Queued {OperationCount} move operations for {EmailCount} emails",
             queuedOperations, triggers.Count);
 
-        // Optional: Wait a bit to ensure the monitoring service processes the queue
-        await Task.Delay(100);
+        return ops;
     }
 
     private Dictionary<string, List<MoveTo>> GroupTriggersByFolder(List<RuleTrigger> triggers)
@@ -85,5 +84,21 @@ public class EmailMover : IEmailMover
 public class MoveTo
 {
     public string Folder { get; set; } = string.Empty;
+    public List<Email> Emails { get; set; } = new();
+}
+public class EmailMoveOperation
+{
+    public string SourceFolder { get; set; } = string.Empty;
+    public string DestinationFolder { get; set; } = string.Empty;
+    public List<Email> Emails { get; set; } = new();
+    public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
+}
+
+// Event args for move operations
+public class EmailMovedEventArgs : EventArgs
+{
+    public string SourceFolder { get; set; } = string.Empty;
+    public string DestinationFolder { get; set; } = string.Empty;
+    public int EmailCount { get; set; }
     public List<Email> Emails { get; set; } = new();
 }

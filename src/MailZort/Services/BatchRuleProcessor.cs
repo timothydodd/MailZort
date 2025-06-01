@@ -9,7 +9,6 @@ public class BatchRuleProcessor : IBatchRuleProcessor
 {
     private readonly ILogger<BatchRuleProcessor> _logger;
     private readonly IEnumerable<Rule> _rules;
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(5);
     private readonly RuleMatcher _ruleMatcher;
 
     public BatchRuleProcessor(ILogger<BatchRuleProcessor> logger, List<Rule> rules, RuleMatcher ruleMatcher)

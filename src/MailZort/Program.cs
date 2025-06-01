@@ -39,16 +39,11 @@ internal class Program
                 services.AddSingleton<MailDb>();
                 services.AddSingleton<IBatchRuleProcessor, BatchRuleProcessor>();
                 services.AddSingleton<IEmailMover, EmailMover>();
-                services.AddSingleton<IEmailHandler, EmailHandler>();
+
                 services.AddSingleton<RuleMatcher>();
                 services.AddSingleton(x => settingHelper);
-                services.AddSingleton<EmailMoveQueue>(); // Singleton to share state
-                services.AddSingleton<IEmailMoveQueue>(provider => provider.GetService<EmailMoveQueue>()!);
                 // Register the background service
                 services.AddHostedService<EmailMonitoringService>();
-
-                // Register your email handler service
-                services.AddSingleton<IEmailHandler, EmailHandler>();
             })
             .ConfigureLogging(logging =>
             {
@@ -57,34 +52,6 @@ internal class Program
                 logging.SetMinimumLevel(LogLevel.Information);
             })
             .Build();
-
-        // Get services and wire up events
-        var emailService = host.Services.GetServices<IHostedService>()
-                       .OfType<EmailMonitoringService>()
-                       .FirstOrDefault();
-
-        var emailHandler = host.Services.GetRequiredService<IEmailHandler>();
-
-        if (emailService != null)
-        {
-            emailService.EmailReceived += emailHandler.HandleEmailReceived;
-            emailService.ProcessingProgress += emailHandler.HandleProcessingProgress;
-
-            // Wire up the new batch processing event if the handler supports it
-            if (emailHandler is EmailHandler batchEmailHandler)
-            {
-                batchEmailHandler.BatchProcessingCompleted += (sender, args) =>
-                {
-                    emailHandler.HandleBatchProcessing(sender, args);
-                };
-            }
-
-            Console.WriteLine("✅ Event handlers wired up successfully");
-        }
-        else
-        {
-            Console.WriteLine("⚠️ EmailMonitoringService not found - events not wired");
-        }
 
         Console.WriteLine("Starting email monitoring service...");
         Console.WriteLine("Press Ctrl+C to stop the service.");

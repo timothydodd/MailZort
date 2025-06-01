@@ -1,4 +1,5 @@
-﻿using System.Data;
+﻿using System.Collections.Concurrent;
+using System.Data;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Security;
@@ -13,43 +14,33 @@ namespace MailZort.Services
         private readonly ILogger<EmailMonitoringService> _logger;
         private readonly EmailSettings _config;
         private readonly MailDb _mailDb;
-        private readonly EmailMoveQueue _moveQueue;
         private ImapClient? _client;
         private CancellationTokenSource? _idleDoneSource;
         private bool _newMessagesFlag = false;
-        private bool _pendingMovesFlag = false;
         private int _lastProcessedCount = 0;
-
-        private const int BatchSize = 50;
+        private readonly IBatchRuleProcessor _batchRuleProcessor;
         private const int ReconnectDelayMs = 600000;
         private const int IdleRetryDelayMs = 5000;
         private const int IdleTimeoutMinutes = 9;
-
+        private readonly IEmailMover _emailMover;
         private CancellationToken _serviceCancellationToken;
+        private readonly ConcurrentQueue<EmailMoveOperation> _moveQueue = new();
 
-        public event EventHandler<EmailReceivedEventArgs>? EmailReceived;
-        public event EventHandler<ProcessingProgressEventArgs>? ProcessingProgress;
 
         public EmailMonitoringService(
             ILogger<EmailMonitoringService> logger,
             EmailSettings config,
             MailDb mailDb,
-            EmailMoveQueue moveQueue)
+            IEmailMover emailMover,
+            IBatchRuleProcessor batchRuleProcessor)
         {
             _logger = logger;
             _config = config;
             _mailDb = mailDb;
-            _moveQueue = moveQueue;
-
-            // Subscribe to move queue events
-            _moveQueue.MoveQueued += OnMoveQueued;
+            _emailMover = emailMover;
+            _batchRuleProcessor = batchRuleProcessor;
         }
 
-        private void OnMoveQueued(object? sender, EventArgs e)
-        {
-            _pendingMovesFlag = true;
-            _idleDoneSource?.Cancel(); // Wake up the IDLE loop
-        }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -124,7 +115,9 @@ namespace MailZort.Services
 
             var totalEmails = _client.Inbox.Count;
             _logger.LogInformation("📬 Processing {TotalEmails} existing emails...", totalEmails);
-            ReportProgress(0, totalEmails, false);
+
+
+            var emailsToProcess = new List<EmailReceivedEventArgs>();
 
             for (int i = 0; i < totalEmails; i++)
             {
@@ -133,12 +126,7 @@ namespace MailZort.Services
 
                 try
                 {
-                    ProcessSingleEmail(_client, _client.Inbox, i, isExisting: true);
-
-                    if (ShouldReportProgress(i + 1, totalEmails))
-                    {
-                        ReportProgress(i + 1, totalEmails, false);
-                    }
+                    ProcessSingleEmail(_client, _client.Inbox, i, isExisting: true, emailsToProcess);
                 }
                 catch (Exception ex)
                 {
@@ -147,14 +135,54 @@ namespace MailZort.Services
             }
 
             _lastProcessedCount = totalEmails;
-            ReportProgress(totalEmails, totalEmails, true);
             _logger.LogInformation("✅ Finished processing {TotalEmails} existing emails", totalEmails);
-
+            await this.ProcessBatchAsync(emailsToProcess);
             // Small delay after processing existing emails
             await Task.Delay(50, cancellationToken);
         }
+        private async Task ProcessBatchAsync(List<EmailReceivedEventArgs> emailsToProcess)
+        {
+            if (!emailsToProcess.Any())
+            {
+                _logger.LogDebug("No emails in queue to process");
+                return;
+            }
 
-        private void ProcessSingleEmail(ImapClient client, IMailFolder folder, int index, bool isExisting)
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            _logger.LogInformation("🔄 Starting batch processing of {EmailCount} emails...", emailsToProcess.Count);
+
+            // Process emails in batch
+            var triggers = await _batchRuleProcessor.ProcessEmailBatchAsync(emailsToProcess);
+
+            // Execute triggers if any matches found
+            var emailsMoved = 0;
+            if (triggers.Any())
+            {
+                var ops = await _emailMover.ExecuteTriggersAsync(triggers);
+                _logger.LogInformation("📦 Executed {OperationCount} email move operations", ops.Count);
+                // Count how many emails were moved
+                foreach (var op in ops)
+                {
+                    this._moveQueue.Enqueue(op);
+                }
+
+                emailsMoved = triggers.Count;
+            }
+
+            stopwatch.Stop();
+            var batchEventArgs = new BatchProcessingEventArgs
+            {
+                EmailsProcessed = emailsToProcess.Count,
+                RulesMatched = triggers.Count,
+                EmailsMoved = emailsMoved,
+                ProcessingTime = stopwatch.Elapsed
+            };
+            _logger.LogInformation("🔄 Batch completed: {EmailsProcessed} emails, {RulesMatched} matches, {EmailsMoved} moved in {ProcessingTime}ms",
+                 batchEventArgs.EmailsProcessed, batchEventArgs.RulesMatched, batchEventArgs.EmailsMoved, batchEventArgs.ProcessingTime.TotalMilliseconds);
+        }
+
+        private void ProcessSingleEmail(ImapClient client, IMailFolder folder, int index, bool isExisting, List<EmailReceivedEventArgs> processList)
         {
             var message = folder.GetMessage(index);
 
@@ -173,31 +201,21 @@ namespace MailZort.Services
                 ReceivedDate = message.Date.DateTime,
                 Folder = folder.Name
             };
-
-            EmailReceived?.Invoke(this, emailArgs);
+            processList.Add(emailArgs);
+            ;
         }
-
-        private bool ShouldReportProgress(int current, int total)
-        {
-            return current % BatchSize == 0 || current % Math.Max(1, total / 10) == 0;
-        }
-
-        private void ReportProgress(int current, int total, bool isComplete)
-        {
-            ProcessingProgress?.Invoke(this, new ProcessingProgressEventArgs
-            {
-                CurrentIndex = current,
-                TotalCount = total,
-                IsComplete = isComplete
-            });
-        }
-
         private async Task MonitorForNewEmailsAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested && _client?.IsConnected == true)
             {
                 try
                 {
+                    // Process any queued move operations
+                    if (_moveQueue.Count > 0)
+                    {
+                        await ProcessQueuedMoveOperationsAsync();
+                    }
+
                     // Use a fresh CancellationTokenSource for each IDLE cycle
                     _idleDoneSource = new CancellationTokenSource(TimeSpan.FromMinutes(IdleTimeoutMinutes));
 
@@ -212,7 +230,7 @@ namespace MailZort.Services
                         {
                             // Fallback for servers that don't support IDLE
                             await Task.Delay(ReconnectDelayMs, stoppingToken);
-                            CheckForNewEmails();
+                            await CheckForNewEmails();
                         }
                     }
                     catch (OperationCanceledException)
@@ -235,15 +253,9 @@ namespace MailZort.Services
                     if (_newMessagesFlag)
                     {
                         _newMessagesFlag = false;
-                        CheckForNewEmails();
+                        await CheckForNewEmails();
                     }
 
-                    // Process any queued move operations
-                    if (_pendingMovesFlag)
-                    {
-                        _pendingMovesFlag = false;
-                        await ProcessQueuedMoveOperationsAsync();
-                    }
 
                     // Brief delay before next IDLE cycle
                     await Task.Delay(100, stoppingToken);
@@ -256,7 +268,7 @@ namespace MailZort.Services
             }
         }
 
-        private void CheckForNewEmails()
+        private async Task CheckForNewEmails()
         {
             try
             {
@@ -266,7 +278,7 @@ namespace MailZort.Services
                 var currentCount = _client.Inbox.Count;
                 if (currentCount > _lastProcessedCount)
                 {
-                    ProcessNewEmails(currentCount);
+                    await ProcessNewEmailsAsync(currentCount);
                 }
             }
             catch (Exception ex)
@@ -275,10 +287,11 @@ namespace MailZort.Services
             }
         }
 
-        private void ProcessNewEmails(int currentCount)
+        private async Task ProcessNewEmailsAsync(int currentCount)
         {
             var newEmailCount = currentCount - _lastProcessedCount;
             _logger.LogInformation("🔔 Processing {NewEmailCount} new email(s)!", newEmailCount);
+            List<EmailReceivedEventArgs> emailsToProcess = new List<EmailReceivedEventArgs>();
 
             for (int i = _lastProcessedCount; i < currentCount; i++)
             {
@@ -287,7 +300,7 @@ namespace MailZort.Services
 
                 try
                 {
-                    ProcessSingleEmail(_client!, _client!.Inbox, i, isExisting: false);
+                    ProcessSingleEmail(_client!, _client!.Inbox, i, isExisting: false, emailsToProcess);
                 }
                 catch (Exception ex)
                 {
@@ -296,6 +309,7 @@ namespace MailZort.Services
             }
 
             _lastProcessedCount = currentCount;
+            await this.ProcessBatchAsync(emailsToProcess);
         }
 
         private async Task ProcessQueuedMoveOperationsAsync()
@@ -358,14 +372,6 @@ namespace MailZort.Services
                 // Save to database
                 SaveEmailsToDatabase(dbConnection, moveOperation.Emails);
 
-                // Notify via the queue service
-                _moveQueue.NotifyEmailMoved(new EmailMovedEventArgs
-                {
-                    SourceFolder = moveOperation.SourceFolder,
-                    DestinationFolder = moveOperation.DestinationFolder,
-                    EmailCount = moveOperation.Emails.Count,
-                    Emails = moveOperation.Emails
-                });
 
                 _logger.LogInformation("📁 Moved {Count} emails from {Source} to {Destination}",
                     moveOperation.Emails.Count, moveOperation.SourceFolder, moveOperation.DestinationFolder);
@@ -443,8 +449,6 @@ namespace MailZort.Services
         {
             _logger.LogInformation("📧 Email monitoring service is stopping...");
 
-            // Unsubscribe from move queue events
-            _moveQueue.MoveQueued -= OnMoveQueued;
 
             // Cancel any ongoing IDLE operation
             _idleDoneSource?.Cancel();
@@ -458,8 +462,6 @@ namespace MailZort.Services
             if (_disposed)
                 return;
             _disposed = true;
-
-            _moveQueue.MoveQueued -= OnMoveQueued;
             _idleDoneSource?.Dispose();
             _client?.Dispose();
 
