@@ -1,5 +1,7 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
+
+using MailKit;
 using MailZort;
 using MailZort.Services;
 using ServiceStack;
@@ -87,7 +89,7 @@ public class RuleTrigger
 {
     public required string From { get; set; }
     public required string To { get; set; }
-    public required uint Id { get; set; }
+    public required UniqueId Id { get; set; }
     public required Email Email { get; set; }
 }
 public enum LookIn
@@ -138,11 +140,11 @@ public class EmailReceivedEventArgs : EventArgs
     public string SenderAddress { get; set; } = string.Empty;
     public string Subject { get; set; } = string.Empty;
     public string Body { get; set; } = string.Empty;
-    public bool IsExisting { get; set; }
-    public int MessageIndex { get; set; }
     public DateTime ReceivedDate { get; set; }
     public string Folder { get; set; } = string.Empty;
-    public uint UniqueId { get; set; } // UID from IMAP server
+    public bool IsRead { get; set; } = false;
+    public bool IsImportant { get; set; } = false;
+    public required UniqueId UniqueId { get; set; }
 }
 
 public class ProcessingProgressEventArgs : EventArgs

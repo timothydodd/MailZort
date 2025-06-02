@@ -2,6 +2,7 @@
 using System.Data;
 using MailKit;
 using MailKit.Net.Imap;
+using MailKit.Search;
 using MailKit.Security;
 using MimeKit;
 using ServiceStack.OrmLite;
@@ -22,9 +23,11 @@ namespace MailZort.Services
         private const int ReconnectDelayMs = 600000;
         private const int IdleRetryDelayMs = 5000;
         private const int IdleTimeoutMinutes = 9;
+        private const int HourlyReprocessIntervalMs = 7200000; // 2 hour in milliseconds
         private readonly IEmailMover _emailMover;
         private CancellationToken _serviceCancellationToken;
         private readonly ConcurrentQueue<EmailMoveOperation> _moveQueue = new();
+        private DateTime _lastFullReprocess = DateTime.MinValue;
 
 
         public EmailMonitoringService(
@@ -79,7 +82,8 @@ namespace MailZort.Services
                 await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
                 _logger.LogInformation("✅ Connected successfully. Processing existing emails...");
-                await ProcessExistingEmailsAsync(cancellationToken);
+                await ProcessMails(false, cancellationToken);
+                _lastFullReprocess = DateTime.UtcNow; // Track when we last did a full reprocess
 
                 // Subscribe to events
                 inbox.CountChanged += OnCountChanged;
@@ -108,7 +112,7 @@ namespace MailZort.Services
             await client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken);
         }
 
-        private async Task ProcessExistingEmailsAsync(CancellationToken cancellationToken)
+        private async Task ProcessMails(bool lastSeenOnly, CancellationToken cancellationToken)
         {
             if (_client?.Inbox == null)
                 return;
@@ -117,16 +121,32 @@ namespace MailZort.Services
             _logger.LogInformation("📬 Processing {TotalEmails} existing emails...", totalEmails);
 
 
+            IList<IMessageSummary>? fetchedMessages = null;
+            var flags = MessageSummaryItems.Envelope | MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure | MessageSummaryItems.Full;
             var emailsToProcess = new List<EmailReceivedEventArgs>();
-
-            for (int i = 0; i < totalEmails; i++)
+            if (lastSeenOnly)
+            {
+                var items = await _client.Inbox.SearchAsync(SearchQuery.NotSeen, cancellationToken);
+                fetchedMessages = await _client.Inbox.FetchAsync(items, flags, cancellationToken);
+            }
+            else
+            {
+                fetchedMessages = await _client.Inbox.FetchAsync(0, totalEmails - 1, flags, cancellationToken);
+            }
+            if (fetchedMessages == null || fetchedMessages.Count == 0)
+            {
+                _logger.LogInformation("No emails to process in the inbox.");
+                return;
+            }
+            for (int i = 0; i < fetchedMessages.Count; i++)
             {
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
                 try
                 {
-                    ProcessSingleEmail(_client, _client.Inbox, i, isExisting: true, emailsToProcess);
+                    var message = fetchedMessages[i];
+                    await ProcessSingleEmail(message, _client.Inbox, emailsToProcess);
                 }
                 catch (Exception ex)
                 {
@@ -140,6 +160,7 @@ namespace MailZort.Services
             // Small delay after processing existing emails
             await Task.Delay(50, cancellationToken);
         }
+
         private async Task ProcessBatchAsync(List<EmailReceivedEventArgs> emailsToProcess)
         {
             if (!emailsToProcess.Any())
@@ -159,7 +180,7 @@ namespace MailZort.Services
             var emailsMoved = 0;
             if (triggers.Any())
             {
-                var ops = await _emailMover.ExecuteTriggersAsync(triggers);
+                var ops = _emailMover.ExecuteTriggersAsync(triggers);
                 _logger.LogInformation("📦 Executed {OperationCount} email move operations", ops.Count);
                 // Count how many emails were moved
                 foreach (var op in ops)
@@ -182,54 +203,102 @@ namespace MailZort.Services
                  batchEventArgs.EmailsProcessed, batchEventArgs.RulesMatched, batchEventArgs.EmailsMoved, batchEventArgs.ProcessingTime.TotalMilliseconds);
         }
 
-        private void ProcessSingleEmail(ImapClient client, IMailFolder folder, int index, bool isExisting, List<EmailReceivedEventArgs> processList)
+        private async Task ProcessSingleEmail(IMessageSummary message, IMailFolder folder, List<EmailReceivedEventArgs> processList)
         {
-            var message = folder.GetMessage(index);
 
-            var senderNames = string.Join(";", message.From.Select(x => x.Name ?? string.Empty));
-            var senderAddresses = string.Join(";", message.From.OfType<MailboxAddress>().Select(x => x.Address));
+            string senderName = message.Envelope.From.FirstOrDefault()?.Name ?? "";
+            string senderEmail = message.Envelope.From.FirstOrDefault()?.ToString() ?? "";
+
+            var senderNames = string.Join(";", message.Envelope.From.Select(x => x.Name ?? string.Empty));
+            var senderAddresses = string.Join(";", message.Envelope.From.OfType<MailboxAddress>().Select(x => x.Address));
+
+            TextPart? bodyPart = null;
+            if (message.HtmlBody != null)
+            {
+                bodyPart = await folder.GetBodyPartAsync(message.UniqueId, message.HtmlBody) as TextPart;
+            }
+            else if (message.TextBody != null)
+            {
+                bodyPart = await folder.GetBodyPartAsync(message.UniqueId, message.TextBody) as TextPart;
+            }
 
             var emailArgs = new EmailReceivedEventArgs
             {
-                From = message.From.ToString(),
+                From = message.Envelope.From.FirstOrDefault()?.ToString() ?? string.Empty,
                 SenderName = senderNames,
                 SenderAddress = senderAddresses,
-                Subject = message.Subject ?? string.Empty,
-                Body = message.TextBody ?? message.HtmlBody ?? string.Empty,
-                IsExisting = isExisting,
-                MessageIndex = index,
+                Subject = message.Envelope.Subject ?? string.Empty,
+                Body = bodyPart != null ? bodyPart.Text : "",
+
                 ReceivedDate = message.Date.DateTime,
-                Folder = folder.Name
+                Folder = folder.Name,
+                IsImportant = message.Flags.HasValue && message.Flags.Value.HasFlag(MessageFlags.Flagged),
+                IsRead = message.Flags.HasValue && message.Flags.Value.HasFlag(MessageFlags.Seen),
+                UniqueId = message.UniqueId
             };
+            if (emailArgs.IsImportant)
+            {
+                // log import emails and skip them
+                _logger.LogInformation("⭐ Important email detected: {Subject} from {Sender} at {Date}",
+                    emailArgs.Subject, emailArgs.SenderName, emailArgs.ReceivedDate);
+                return; // Skip processing important emails for now
+            }
             processList.Add(emailArgs);
-            ;
+
         }
+
         private async Task MonitorForNewEmailsAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested && _client?.IsConnected == true)
             {
                 try
                 {
+                    // Check if it's time for hourly full reprocessing
+                    var timeSinceLastReprocess = DateTime.UtcNow - _lastFullReprocess;
+                    if (timeSinceLastReprocess.TotalMilliseconds >= HourlyReprocessIntervalMs)
+                    {
+                        _logger.LogInformation("⏰ Hourly reprocessing time reached. Exiting IDLE to reprocess all emails...");
+                        await ProcessMails(false, stoppingToken);
+                        _lastFullReprocess = DateTime.UtcNow;
+                        continue; // Skip the IDLE cycle and immediately check again
+                    }
+
                     // Process any queued move operations
                     if (_moveQueue.Count > 0)
                     {
                         await ProcessQueuedMoveOperationsAsync();
                     }
 
+                    // Calculate remaining time until next full reprocess
+                    var remainingTime = TimeSpan.FromMilliseconds(HourlyReprocessIntervalMs) - timeSinceLastReprocess;
+                    var idleTimeout = TimeSpan.FromMinutes(IdleTimeoutMinutes);
+
+                    // Use the shorter of the two timeouts
+                    var actualTimeout = remainingTime < idleTimeout ? remainingTime : idleTimeout;
+
+                    // Don't IDLE if the timeout would be very short
+                    if (actualTimeout.TotalSeconds < 30)
+                    {
+                        await Task.Delay(1000, stoppingToken); // Brief delay before checking again
+                        continue;
+                    }
+
                     // Use a fresh CancellationTokenSource for each IDLE cycle
-                    _idleDoneSource = new CancellationTokenSource(TimeSpan.FromMinutes(IdleTimeoutMinutes));
+                    _idleDoneSource = new CancellationTokenSource(actualTimeout);
 
                     try
                     {
                         // Enter IDLE mode – will block until done token is canceled or timeout
                         if (_client.Capabilities.HasFlag(ImapCapabilities.Idle))
                         {
+                            _logger.LogDebug("📱 Entering IDLE mode for {Timeout} (next full reprocess in {NextReprocess})",
+                                actualTimeout, remainingTime);
                             await _client.IdleAsync(_idleDoneSource.Token, stoppingToken);
                         }
                         else
                         {
                             // Fallback for servers that don't support IDLE
-                            await Task.Delay(ReconnectDelayMs, stoppingToken);
+                            await Task.Delay(Math.Min((int)actualTimeout.TotalMilliseconds, ReconnectDelayMs), stoppingToken);
                             await CheckForNewEmails();
                         }
                     }
@@ -240,7 +309,7 @@ namespace MailZort.Services
                             _logger.LogInformation("📧 Monitoring stopped due to service shutdown");
                             break;
                         }
-                        // Expected when _idleDoneSource is triggered by event handlers or move queue
+                        // Expected when _idleDoneSource is triggered by event handlers, move queue, or timeout
                         _logger.LogDebug("IDLE interrupted for processing");
                     }
                     finally
@@ -255,7 +324,6 @@ namespace MailZort.Services
                         _newMessagesFlag = false;
                         await CheckForNewEmails();
                     }
-
 
                     // Brief delay before next IDLE cycle
                     await Task.Delay(100, stoppingToken);
@@ -278,7 +346,7 @@ namespace MailZort.Services
                 var currentCount = _client.Inbox.Count;
                 if (currentCount > _lastProcessedCount)
                 {
-                    await ProcessNewEmailsAsync(currentCount);
+                    await ProcessMails(true, _serviceCancellationToken);
                 }
             }
             catch (Exception ex)
@@ -287,30 +355,6 @@ namespace MailZort.Services
             }
         }
 
-        private async Task ProcessNewEmailsAsync(int currentCount)
-        {
-            var newEmailCount = currentCount - _lastProcessedCount;
-            _logger.LogInformation("🔔 Processing {NewEmailCount} new email(s)!", newEmailCount);
-            List<EmailReceivedEventArgs> emailsToProcess = new List<EmailReceivedEventArgs>();
-
-            for (int i = _lastProcessedCount; i < currentCount; i++)
-            {
-                if (_serviceCancellationToken.IsCancellationRequested)
-                    break;
-
-                try
-                {
-                    ProcessSingleEmail(_client!, _client!.Inbox, i, isExisting: false, emailsToProcess);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error processing new email at index {Index}", i);
-                }
-            }
-
-            _lastProcessedCount = currentCount;
-            await this.ProcessBatchAsync(emailsToProcess);
-        }
 
         private async Task ProcessQueuedMoveOperationsAsync()
         {
@@ -366,8 +410,8 @@ namespace MailZort.Services
                 var destinationFolder = GetDestinationFolder(moveOperation.DestinationFolder);
 
                 // Perform the move
-                var indexes = moveOperation.Emails.Select(e => e.MessageIndex).ToList();
-                await sourceFolder.MoveToAsync(indexes, destinationFolder);
+
+                await sourceFolder.MoveToAsync(moveOperation.EmailIds, destinationFolder);
 
                 // Save to database
                 SaveEmailsToDatabase(dbConnection, moveOperation.Emails);

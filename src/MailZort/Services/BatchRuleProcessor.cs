@@ -93,12 +93,12 @@ public class BatchRuleProcessor : IBatchRuleProcessor
     {
         return new RuleTrigger
         {
-            Id = (uint)email.MessageIndex,
+            Id = email.UniqueId,
             From = email.Folder,
             To = rule.MoveTo,
             Email = new Email
             {
-                MessageIndex = email.MessageIndex,
+                MessageIndex = (int)email.UniqueId.Id,
                 Folder = email.Folder,
                 MoveTo = $"{rule.Name}->{rule.MoveTo}",
                 Subject = email.Subject,

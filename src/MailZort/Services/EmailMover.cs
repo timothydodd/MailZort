@@ -1,9 +1,12 @@
-﻿namespace MailZort.Services;
+﻿
+using MailKit;
+
+namespace MailZort.Services;
 
 // Simplified EmailMover that uses the queue service
 public interface IEmailMover
 {
-    Task<List<EmailMoveOperation>> ExecuteTriggersAsync(List<RuleTrigger> triggers);
+    List<EmailMoveOperation> ExecuteTriggersAsync(List<RuleTrigger> triggers);
 }
 
 public class EmailMover : IEmailMover
@@ -16,7 +19,7 @@ public class EmailMover : IEmailMover
 
     }
 
-    public async Task<List<EmailMoveOperation>> ExecuteTriggersAsync(List<RuleTrigger> triggers)
+    public List<EmailMoveOperation> ExecuteTriggersAsync(List<RuleTrigger> triggers)
     {
         List<EmailMoveOperation> ops = new List<EmailMoveOperation>();
         if (!triggers.Any())
@@ -38,7 +41,9 @@ public class EmailMover : IEmailMover
                     {
                         SourceFolder = sourceFolder,
                         DestinationFolder = moveTo.Folder,
-                        Emails = moveTo.Emails
+                        Emails = moveTo.Emails,
+                        EmailIds = moveTo.EmailIds
+
                     };
 
                     ops.Add(moveOperation);
@@ -73,17 +78,19 @@ public class EmailMover : IEmailMover
                 moveTo = new MoveTo { Folder = trigger.To };
                 moveTos.Add(moveTo);
             }
-
+            moveTo.EmailIds.Add(trigger.Id);
             moveTo.Emails.Add(trigger.Email);
         }
 
         return grouped;
     }
+
 }
 
 public class MoveTo
 {
     public string Folder { get; set; } = string.Empty;
+    public List<UniqueId> EmailIds { get; set; } = new();
     public List<Email> Emails { get; set; } = new();
 }
 public class EmailMoveOperation
@@ -91,14 +98,7 @@ public class EmailMoveOperation
     public string SourceFolder { get; set; } = string.Empty;
     public string DestinationFolder { get; set; } = string.Empty;
     public List<Email> Emails { get; set; } = new();
+    public List<UniqueId> EmailIds { get; set; } = new();
     public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 }
 
-// Event args for move operations
-public class EmailMovedEventArgs : EventArgs
-{
-    public string SourceFolder { get; set; } = string.Empty;
-    public string DestinationFolder { get; set; } = string.Empty;
-    public int EmailCount { get; set; }
-    public List<Email> Emails { get; set; } = new();
-}

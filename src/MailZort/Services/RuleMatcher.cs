@@ -12,6 +12,12 @@ public class RuleMatcher
     }
     private static bool PassesAgeFilter(Rule rule, EmailReceivedEventArgs email)
     {
+        if (email.IsRead)
+        {
+            if (DateTimeOffset.Now.Subtract(email.ReceivedDate).TotalHours > 2)
+                return true;
+
+        }
         if (rule.DaysOld <= 0)
             return true;
 
@@ -29,8 +35,8 @@ public class RuleMatcher
 
             var matchResult = rule.ExpressionType switch
             {
-                ExpressionType.Contains => CheckContainsMatchWithDebug(rule.LookIn, email, value, rule.Name),
-                ExpressionType.MatchesRegex => CheckRegexMatchWithDebug(rule.LookIn, email, value, rule.Name),
+                ExpressionType.Contains => CheckContainsMatchWithDebug(rule.LookIn, email, value, rule.Name ?? "Unknown Rule"),
+                ExpressionType.MatchesRegex => CheckRegexMatchWithDebug(rule.LookIn, email, value, rule.Name ?? "Unknown Rule"),
                 _ => new MatchResult { IsMatch = false, MatchLocation = "Unknown expression type" }
             };
 
