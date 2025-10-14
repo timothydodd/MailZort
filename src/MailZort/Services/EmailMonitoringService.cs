@@ -29,7 +29,6 @@ namespace MailZort.Services
         private readonly ConcurrentQueue<EmailMoveOperation> _moveQueue = new();
         private DateTime _lastFullReprocess = DateTime.MinValue;
 
-
         public EmailMonitoringService(
             ILogger<EmailMonitoringService> logger,
             EmailSettings config,
