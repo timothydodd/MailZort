@@ -30,9 +30,9 @@
 	  <PackageReference Include="Microsoft.Extensions.Configuration.FileExtensions" Version="9.0.10" />
 	  <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.10" />
 	  <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.0.10" />
-	  <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.10" />
+	  <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
 	  <DotNetCliToolReference Include="Microsoft.Extensions.SecretManager.Tools" Version="2.0.0" />
-	  <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.10" />
+	  <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
 	  <PackageReference Include="Microsoft.NET.Build.Containers" Version="9.0.306" />
 	  <PackageReference Include="ServiceStack.OrmLite.Sqlite.Data" Version="8.9.0" />
 	  <PackageReference Include="System.Text.Json" Version="9.0.10" />
