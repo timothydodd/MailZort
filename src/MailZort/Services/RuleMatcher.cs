@@ -24,6 +24,19 @@ public class RuleMatcher
         var emailAge = DateTimeOffset.Now.Subtract(email.ReceivedDate).TotalDays;
         return emailAge >= rule.DaysOld;
     }
+
+    private static bool PassesStatusFilters(Rule rule, EmailReceivedEventArgs email)
+    {
+        // Check RequireUnread filter - if set to true, email must be unread
+        if (rule.RequireUnread == true && email.IsRead)
+            return false;
+
+        // Check RequireNotImportant filter - if set to true, email must NOT be important
+        if (rule.RequireNotImportant == true && email.IsImportant)
+            return false;
+
+        return true;
+    }
     // Enhanced version with detailed debug information
     public bool CheckRuleMatch(Rule rule, EmailReceivedEventArgs email)
     {
@@ -48,7 +61,11 @@ public class RuleMatcher
                 var passesAge = PassesAgeFilter(rule, email);
                 _logger.LogDebug("Age filter result: {PassesAge} for rule: {RuleId}", passesAge, rule.Name);
 
-                if (passesAge)
+                var passesStatus = PassesStatusFilters(rule, email);
+                _logger.LogDebug("Status filter result: {PassesStatus} for rule: {RuleId} (IsRead: {IsRead}, IsImportant: {IsImportant})",
+                    passesStatus, rule.Name, email.IsRead, email.IsImportant);
+
+                if (passesAge && passesStatus)
                 {
                     _logger.LogInformation("RULE MATCHED! Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}'",
                         rule.Name, value, matchResult.MatchLocation, email.Subject);
@@ -56,7 +73,8 @@ public class RuleMatcher
                 }
                 else
                 {
-                    _logger.LogDebug("Match found but failed age filter. Rule: {RuleId}", rule.Name);
+                    _logger.LogDebug("Match found but failed filters (age: {PassesAge}, status: {PassesStatus}). Rule: {RuleId}",
+                        passesAge, passesStatus, rule.Name);
                 }
             }
             else

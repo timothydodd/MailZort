@@ -73,6 +73,14 @@ public class Rule
     public ExpressionType ExpressionType { get; set; }
     public int DaysOld { get; set; }
     public List<string>? Values { get; set; }
+    /// <summary>
+    /// If true, rule only matches unread emails. If false or null, read status is ignored.
+    /// </summary>
+    public bool? RequireUnread { get; set; }
+    /// <summary>
+    /// If true, rule only matches emails that are NOT marked as important. If false or null, importance is ignored.
+    /// </summary>
+    public bool? RequireNotImportant { get; set; }
 }
 public class EmailSettings
 {
