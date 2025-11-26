@@ -366,13 +366,11 @@ namespace MailZort.Services
             var processedCount = 0;
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            using var dbConnection = _mailDb.GetConnection();
-
             while (_moveQueue.TryDequeue(out var moveOperation) && moveOperation != null)
             {
                 try
                 {
-                    await ProcessSingleMoveOperationAsync(dbConnection, moveOperation);
+                    await ProcessSingleMoveOperationAsync(moveOperation);
                     processedCount++;
                 }
                 catch (Exception ex)
@@ -394,7 +392,7 @@ namespace MailZort.Services
             }
         }
 
-        private async Task ProcessSingleMoveOperationAsync(IDbConnection dbConnection, EmailMoveOperation moveOperation)
+        private async Task ProcessSingleMoveOperationAsync(EmailMoveOperation moveOperation)
         {
             if (!moveOperation.Emails.Any())
                 return;
@@ -409,12 +407,13 @@ namespace MailZort.Services
                 var destinationFolder = GetDestinationFolder(moveOperation.DestinationFolder);
 
                 // Perform the move
-
                 await sourceFolder.MoveToAsync(moveOperation.EmailIds, destinationFolder);
 
-                // Save to database
-                SaveEmailsToDatabase(dbConnection, moveOperation.Emails);
-
+                // Save to database if enabled
+                if (_config.StoreMovedMessages)
+                {
+                    SaveEmailsToDatabase(moveOperation.Emails);
+                }
 
                 _logger.LogInformation("📁 Moved {Count} emails from {Source} to {Destination}",
                     moveOperation.Emails.Count, moveOperation.SourceFolder, moveOperation.DestinationFolder);
@@ -439,8 +438,9 @@ namespace MailZort.Services
             return _client!.GetFolder(folderName);
         }
 
-        private void SaveEmailsToDatabase(IDbConnection dbConnection, List<Email> emails)
+        private void SaveEmailsToDatabase(List<Email> emails)
         {
+            using var dbConnection = _mailDb.GetConnection();
             foreach (var email in emails)
             {
                 try

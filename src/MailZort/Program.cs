@@ -90,7 +90,7 @@ public class EmailSettings
     public string? Password { get; set; }
     public int Port { get; set; }
     public bool UseSsl { get; set; }
-    public bool StoreMovedMessages { get; set; } = true;
+    public bool StoreMovedMessages { get; set; } = false;
     public int BatchProcessingIntervalSeconds { get; set; } = 60; // Default to 60 seconds
 }
 public class RuleTrigger
