@@ -12,7 +12,7 @@ public class RuleMatcher
     }
     private static bool PassesAgeFilter(Rule rule, EmailReceivedEventArgs email)
     {
-        if (email.IsRead)
+        if (email.IsRead && rule.ExpressionType != ExpressionType.AllEmails)
         {
             if (DateTimeOffset.Now.Subtract(email.ReceivedDate).TotalHours > 2)
                 return true;
@@ -28,7 +28,7 @@ public class RuleMatcher
     private static bool PassesStatusFilters(Rule rule, EmailReceivedEventArgs email)
     {
         // Check RequireUnread filter - if set to true, email must be unread
-        if (rule.RequireUnread == true && email.IsRead)
+        if (rule.RequireUnread == true && !email.IsRead)
             return false;
 
         // Check RequireNotImportant filter - if set to true, email must NOT be important
@@ -37,11 +37,47 @@ public class RuleMatcher
 
         return true;
     }
+    private bool ProcessMatch(Rule rule, EmailReceivedEventArgs email, string value, MatchResult matchResult)
+    {
+        _logger.LogDebug("Match found! Rule: {RuleId}, Value: '{Value}', Location: {Location}",
+                  rule.Name, value, matchResult.MatchLocation);
+
+        var passesAge = PassesAgeFilter(rule, email);
+        _logger.LogDebug("Age filter result: {PassesAge} for rule: {RuleId}", passesAge, rule.Name);
+
+        var passesStatus = PassesStatusFilters(rule, email);
+        _logger.LogDebug("Status filter result: {PassesStatus} for rule: {RuleId} (IsRead: {IsRead}, IsImportant: {IsImportant})",
+            passesStatus, rule.Name, email.IsRead, email.IsImportant);
+
+        if (passesAge && passesStatus)
+        {
+            _logger.LogInformation("RULE MATCHED! Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}'",
+                rule.Name, value, matchResult.MatchLocation, email.Subject);
+            return true;
+        }
+        else
+        {
+            _logger.LogDebug("Match found but failed filters (age: {PassesAge}, status: {PassesStatus}). Rule: {RuleId}",
+                passesAge, passesStatus, rule.Name);
+            return false;
+        }
+    }
     // Enhanced version with detailed debug information
     public bool CheckRuleMatch(Rule rule, EmailReceivedEventArgs email)
     {
         _logger.LogDebug("Checking rule: {RuleId} with {ValueCount} values", rule.Name, rule.Values?.Count ?? 0);
-
+        if (rule.ExpressionType == ExpressionType.AllEmails)
+        {
+            _logger.LogDebug("ExpressionType is AllEmails, automatically passing match for rule: {RuleId}", rule.Name);
+            if (ProcessMatch(rule, email, "AllEmails", new MatchResult { IsMatch = true, MatchLocation = "AllEmails" }))
+            {
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
         foreach (var value in rule.Values!)
         {
             _logger.LogDebug("Testing value: '{Value}' with expression type: {ExpressionType}", value, rule.ExpressionType);
@@ -55,26 +91,9 @@ public class RuleMatcher
 
             if (matchResult.IsMatch)
             {
-                _logger.LogDebug("Match found! Rule: {RuleId}, Value: '{Value}', Location: {Location}",
-                    rule.Name, value, matchResult.MatchLocation);
-
-                var passesAge = PassesAgeFilter(rule, email);
-                _logger.LogDebug("Age filter result: {PassesAge} for rule: {RuleId}", passesAge, rule.Name);
-
-                var passesStatus = PassesStatusFilters(rule, email);
-                _logger.LogDebug("Status filter result: {PassesStatus} for rule: {RuleId} (IsRead: {IsRead}, IsImportant: {IsImportant})",
-                    passesStatus, rule.Name, email.IsRead, email.IsImportant);
-
-                if (passesAge && passesStatus)
+                if (ProcessMatch(rule, email, value, matchResult))
                 {
-                    _logger.LogInformation("RULE MATCHED! Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}'",
-                        rule.Name, value, matchResult.MatchLocation, email.Subject);
                     return true;
-                }
-                else
-                {
-                    _logger.LogDebug("Match found but failed filters (age: {PassesAge}, status: {PassesStatus}). Rule: {RuleId}",
-                        passesAge, passesStatus, rule.Name);
                 }
             }
             else

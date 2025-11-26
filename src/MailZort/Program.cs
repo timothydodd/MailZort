@@ -118,7 +118,8 @@ public enum ExpressionType
     StartsWith,
     EndsWith,
     MatchesRegex,
-    DoesNotMatchRegex
+    DoesNotMatchRegex,
+    AllEmails
 }
 public class Stats
 {
