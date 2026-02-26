@@ -27,6 +27,7 @@ namespace MailZort.Services
         private readonly IEmailMover _emailMover;
         private CancellationToken _serviceCancellationToken;
         private readonly ConcurrentQueue<EmailMoveOperation> _moveQueue = new();
+        private readonly ConcurrentQueue<EmailFlagOperation> _flagQueue = new();
         private DateTime _lastFullReprocess = DateTime.MinValue;
 
         public EmailMonitoringService(
@@ -187,15 +188,22 @@ namespace MailZort.Services
             var emailsMoved = 0;
             if (triggers.Any())
             {
+                // Extract and queue flag operations
+                var flagOps = _emailMover.ExtractFlagOperations(triggers);
+                foreach (var flagOp in flagOps)
+                {
+                    _flagQueue.Enqueue(flagOp);
+                }
+
                 var ops = _emailMover.ExecuteTriggers(triggers);
-                _logger.LogInformation("📦 Executed {OperationCount} email move operations", ops.Count);
-                // Count how many emails were moved
+                _logger.LogInformation("📦 Executed {OperationCount} move operations and {FlagCount} flag operations",
+                    ops.Count, flagOps.Count);
                 foreach (var op in ops)
                 {
                     this._moveQueue.Enqueue(op);
                 }
 
-                emailsMoved = triggers.Count;
+                emailsMoved = triggers.Count(t => t.Action == RuleAction.Move);
             }
 
             stopwatch.Stop();
@@ -332,6 +340,12 @@ namespace MailZort.Services
                         continue; // Skip the IDLE cycle and immediately check again
                     }
 
+                    // Process any queued flag operations
+                    if (_flagQueue.Count > 0)
+                    {
+                        await ProcessQueuedFlagOperationsAsync();
+                    }
+
                     // Process any queued move operations
                     if (_moveQueue.Count > 0)
                     {
@@ -466,6 +480,68 @@ namespace MailZort.Services
                 stopwatch.Stop();
                 _logger.LogInformation("✅ Processed {Count} move operations in {ElapsedMs}ms",
                     processedCount, stopwatch.ElapsedMilliseconds);
+            }
+        }
+
+        private async Task ProcessQueuedFlagOperationsAsync()
+        {
+            if (_client == null || !_client.IsConnected)
+            {
+                _logger.LogWarning("Cannot process flag operations: client not connected");
+                return;
+            }
+
+            var processedCount = 0;
+
+            while (_flagQueue.TryDequeue(out var flagOperation) && flagOperation != null)
+            {
+                try
+                {
+                    await ProcessSingleFlagOperationAsync(flagOperation);
+                    processedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error processing flag operation for folder {Source}",
+                        flagOperation.SourceFolder);
+                }
+
+                if (_serviceCancellationToken.IsCancellationRequested)
+                    break;
+            }
+
+            if (processedCount > 0)
+            {
+                _logger.LogInformation("⭐ Processed {Count} flag operations", processedCount);
+            }
+        }
+
+        private async Task ProcessSingleFlagOperationAsync(EmailFlagOperation flagOperation)
+        {
+            if (!flagOperation.EmailIds.Any())
+                return;
+
+            IMailFolder? folder = null;
+            try
+            {
+                folder = _client!.GetFolder(flagOperation.SourceFolder);
+                await folder.OpenAsync(FolderAccess.ReadWrite);
+                await folder.AddFlagsAsync(flagOperation.EmailIds, MessageFlags.Flagged, true);
+
+                _logger.LogInformation("⭐ Flagged {Count} emails as important in {Folder}",
+                    flagOperation.EmailIds.Count, flagOperation.SourceFolder);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error flagging emails in {Folder}", flagOperation.SourceFolder);
+                throw;
+            }
+            finally
+            {
+                if (folder is { IsOpen: true })
+                {
+                    await folder.CloseAsync();
+                }
             }
         }
 

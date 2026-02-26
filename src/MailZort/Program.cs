@@ -89,6 +89,7 @@ public class Rule
     /// If true, rule only matches emails that are NOT marked as important. If false or null, importance is ignored.
     /// </summary>
     public bool? RequireNotImportant { get; set; }
+    public RuleAction Action { get; set; } = RuleAction.Move;
 }
 public class EmailSettings
 {
@@ -110,6 +111,7 @@ public class RuleTrigger
     public required string To { get; set; }
     public required UniqueId Id { get; set; }
     public required Email Email { get; set; }
+    public RuleAction Action { get; set; } = RuleAction.Move;
 }
 public enum LookIn
 {
@@ -153,4 +155,17 @@ public class BatchProcessingEventArgs : EventArgs
     public int RulesMatched { get; set; }
     public int EmailsMoved { get; set; }
     public TimeSpan ProcessingTime { get; set; }
+}
+
+public enum RuleAction
+{
+    Move,
+    MarkImportant
+}
+
+public class EmailFlagOperation
+{
+    public string SourceFolder { get; set; } = string.Empty;
+    public List<UniqueId> EmailIds { get; set; } = new();
+    public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 }

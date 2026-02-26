@@ -99,12 +99,13 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         {
             Id = email.UniqueId,
             From = email.Folder,
-            To = rule.MoveTo,
+            To = rule.Action == RuleAction.MarkImportant ? string.Empty : rule.MoveTo,
+            Action = rule.Action,
             Email = new Email
             {
                 MessageIndex = (int)email.UniqueId.Id,
                 Folder = email.Folder,
-                MoveTo = $"{rule.Name}->{rule.MoveTo}",
+                MoveTo = rule.Action == RuleAction.MarkImportant ? $"{rule.Name}->Flagged" : $"{rule.Name}->{rule.MoveTo}",
                 Subject = email.Subject,
                 SenderName = email.SenderName,
                 SenderEmailaddress = email.SenderAddress,

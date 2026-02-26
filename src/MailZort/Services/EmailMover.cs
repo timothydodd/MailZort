@@ -7,6 +7,7 @@ namespace MailZort.Services;
 public interface IEmailMover
 {
     List<EmailMoveOperation> ExecuteTriggers(List<RuleTrigger> triggers);
+    List<EmailFlagOperation> ExtractFlagOperations(List<RuleTrigger> triggers);
 }
 
 public class EmailMover : IEmailMover
@@ -19,6 +20,27 @@ public class EmailMover : IEmailMover
 
     }
 
+    public List<EmailFlagOperation> ExtractFlagOperations(List<RuleTrigger> triggers)
+    {
+        var flagTriggers = triggers.Where(t => t.Action == RuleAction.MarkImportant).ToList();
+        if (!flagTriggers.Any())
+            return new List<EmailFlagOperation>();
+
+        var grouped = flagTriggers
+            .GroupBy(t => t.From)
+            .Select(g => new EmailFlagOperation
+            {
+                SourceFolder = g.Key,
+                EmailIds = g.Select(t => t.Id).ToList()
+            })
+            .ToList();
+
+        _logger.LogInformation("📌 Created {OperationCount} flag operations for {EmailCount} emails",
+            grouped.Count, flagTriggers.Count);
+
+        return grouped;
+    }
+
     public List<EmailMoveOperation> ExecuteTriggers(List<RuleTrigger> triggers)
     {
         List<EmailMoveOperation> ops = new List<EmailMoveOperation>();
@@ -27,6 +49,11 @@ public class EmailMover : IEmailMover
             _logger.LogDebug("No triggers to execute");
             return ops;
         }
+
+        // Only process Move triggers for move operations
+        triggers = triggers.Where(t => t.Action == RuleAction.Move).ToList();
+        if (!triggers.Any())
+            return ops;
 
         var groupedTriggers = GroupTriggersByFolder(triggers);
         var queuedOperations = 0;
