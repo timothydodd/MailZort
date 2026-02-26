@@ -1,4 +1,4 @@
-﻿// See https://aka.ms/new-console-template for more information
+// See https://aka.ms/new-console-template for more information
 
 
 using MailKit;
@@ -30,13 +30,21 @@ internal class Program
             {
                 var rules = context.Configuration.GetSection("Rules")?.Get<IEnumerable<Rule>>()?.Where(x => x.IsEnabled).ToList();
 
-                if (rules.Any())
+                if (rules != null && rules.Any())
                 {
                     services.AddSingleton(rules);
                 }
                 // Bind email configuration from appsettings.json
                 var emailConfig = new EmailSettings();
                 context.Configuration.GetSection("EmailSettings").Bind(emailConfig);
+
+                if (string.IsNullOrWhiteSpace(emailConfig.Server) ||
+                    string.IsNullOrWhiteSpace(emailConfig.Username) ||
+                    string.IsNullOrWhiteSpace(emailConfig.Password))
+                {
+                    throw new InvalidOperationException("EmailSettings: Server, Username, and Password are required.");
+                }
+
                 services.AddSingleton(emailConfig);
                 services.AddSingleton<MailDb>();
                 services.AddSingleton<IBatchRuleProcessor, BatchRuleProcessor>();
@@ -92,6 +100,9 @@ public class EmailSettings
     public bool UseSsl { get; set; }
     public bool StoreMovedMessages { get; set; } = false;
     public int BatchProcessingIntervalSeconds { get; set; } = 60; // Default to 60 seconds
+    public bool InboxCleanupEnabled { get; set; } = true;
+    public int InboxCleanupDaysOld { get; set; } = 30;
+    public string ImportantFolder { get; set; } = "Important";
 }
 public class RuleTrigger
 {
@@ -121,26 +132,6 @@ public enum ExpressionType
     DoesNotMatchRegex,
     AllEmails
 }
-public class Stats
-{
-    private readonly ILogger<Stats> _logger;
-
-    public int NewFiles { get; set; }
-    public int FilesUpdated { get; set; }
-    public int FilesDeleted { get; set; }
-    public Stats(ILogger<Stats> logger)
-    {
-        _logger = logger;
-    }
-
-
-    public void PrintStats()
-    {
-        _logger.LogInformation($"New Files: {NewFiles}");
-        _logger.LogInformation($"Updated Files: {FilesUpdated}");
-        _logger.LogInformation($"Deleted Files: {FilesDeleted}");
-    }
-}
 
 public class EmailReceivedEventArgs : EventArgs
 {
@@ -156,13 +147,6 @@ public class EmailReceivedEventArgs : EventArgs
     public required UniqueId UniqueId { get; set; }
 }
 
-public class ProcessingProgressEventArgs : EventArgs
-{
-    public int CurrentIndex { get; set; }
-    public int TotalCount { get; set; }
-    public bool IsComplete { get; set; }
-    public double PercentComplete => TotalCount > 0 ? (double)CurrentIndex / TotalCount * 100 : 0;
-}
 public class BatchProcessingEventArgs : EventArgs
 {
     public int EmailsProcessed { get; set; }

@@ -1,4 +1,4 @@
-﻿
+
 using MailKit;
 
 namespace MailZort.Services;
@@ -6,7 +6,7 @@ namespace MailZort.Services;
 // Simplified EmailMover that uses the queue service
 public interface IEmailMover
 {
-    List<EmailMoveOperation> ExecuteTriggersAsync(List<RuleTrigger> triggers);
+    List<EmailMoveOperation> ExecuteTriggers(List<RuleTrigger> triggers);
 }
 
 public class EmailMover : IEmailMover
@@ -19,7 +19,7 @@ public class EmailMover : IEmailMover
 
     }
 
-    public List<EmailMoveOperation> ExecuteTriggersAsync(List<RuleTrigger> triggers)
+    public List<EmailMoveOperation> ExecuteTriggers(List<RuleTrigger> triggers)
     {
         List<EmailMoveOperation> ops = new List<EmailMoveOperation>();
         if (!triggers.Any())
@@ -71,7 +71,7 @@ public class EmailMover : IEmailMover
             }
 
             var moveTo = moveTos.FirstOrDefault(x =>
-                string.Equals(x.Folder, trigger.To, StringComparison.CurrentCultureIgnoreCase));
+                string.Equals(x.Folder, trigger.To, StringComparison.OrdinalIgnoreCase));
 
             if (moveTo == null)
             {
@@ -101,4 +101,3 @@ public class EmailMoveOperation
     public List<UniqueId> EmailIds { get; set; } = new();
     public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 }
-
