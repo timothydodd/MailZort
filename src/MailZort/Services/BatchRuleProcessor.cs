@@ -1,9 +1,7 @@
-﻿using System.Collections.Concurrent;
-
 namespace MailZort.Services;
 public interface IBatchRuleProcessor
 {
-    Task<List<RuleTrigger>> ProcessEmailBatchAsync(List<EmailReceivedEventArgs> emails);
+    List<RuleTrigger> ProcessEmailBatch(List<EmailReceivedEventArgs> emails);
 }
 public class BatchRuleProcessor : IBatchRuleProcessor
 {
@@ -18,7 +16,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         _ruleMatcher = ruleMatcher;
     }
 
-    public async Task<List<RuleTrigger>> ProcessEmailBatchAsync(List<EmailReceivedEventArgs> emails)
+    public List<RuleTrigger> ProcessEmailBatch(List<EmailReceivedEventArgs> emails)
     {
         if (!emails.Any())
         {
@@ -27,32 +25,16 @@ public class BatchRuleProcessor : IBatchRuleProcessor
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var triggers = new List<RuleTrigger>();
-        var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || r.Values?.Any() == true)).ToList();
+        var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || (r.FrozenValues ?? r.Values?.ToArray())?.Length > 0)).ToList();
 
         _logger.LogInformation("Processing batch of {EmailCount} emails against {RuleCount} rules",
             emails.Count, enabledRules.Count);
 
-        // Process all emails in parallel for better performance
-        var parallelOptions = new ParallelOptions
+        foreach (var email in emails)
         {
-            MaxDegreeOfParallelism = Environment.ProcessorCount
-        };
-
-        var concurrentTriggers = new ConcurrentBag<RuleTrigger>();
-
-        await Task.Run(() =>
-        {
-            Parallel.ForEach(emails, parallelOptions, email =>
-            {
-                var emailTriggers = ProcessSingleEmailAgainstRules(email, enabledRules);
-                foreach (var trigger in emailTriggers)
-                {
-                    concurrentTriggers.Add(trigger);
-                }
-            });
-        });
-
-        triggers.AddRange(concurrentTriggers);
+            var emailTriggers = ProcessSingleEmailAgainstRules(email, enabledRules);
+            triggers.AddRange(emailTriggers);
+        }
 
         stopwatch.Stop();
         _logger.LogInformation("Batch processing completed in {ElapsedMs}ms. Found {TriggerCount} rule matches",
@@ -76,8 +58,6 @@ public class BatchRuleProcessor : IBatchRuleProcessor
                 if (_ruleMatcher.CheckRuleMatch(rule, email))
                 {
                     triggers.Add(CreateTrigger(rule, email));
-                    // For now, only match one rule per email to avoid conflicts
-                    // You can remove this break if you want multiple rules to apply
                     break;
                 }
             }
@@ -91,15 +71,13 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         return triggers;
     }
 
-
-
     private static RuleTrigger CreateTrigger(Rule rule, EmailReceivedEventArgs email)
     {
         return new RuleTrigger
         {
             Id = email.UniqueId,
             From = email.Folder,
-            To = rule.Action == RuleAction.MarkImportant ? string.Empty : rule.MoveTo,
+            To = rule.Action == RuleAction.MarkImportant ? string.Empty : rule.MoveTo ?? string.Empty,
             Action = rule.Action,
             Email = new Email
             {

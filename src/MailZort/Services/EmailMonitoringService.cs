@@ -182,7 +182,7 @@ namespace MailZort.Services
             _logger.LogInformation("🔄 Starting batch processing of {EmailCount} emails...", emailsToProcess.Count);
 
             // Process emails in batch
-            var triggers = await _batchRuleProcessor.ProcessEmailBatchAsync(emailsToProcess);
+            var triggers = _batchRuleProcessor.ProcessEmailBatch(emailsToProcess);
 
             // Execute triggers if any matches found
             var emailsMoved = 0;

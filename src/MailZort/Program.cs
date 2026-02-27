@@ -30,8 +30,14 @@ internal class Program
             {
                 var rules = context.Configuration.GetSection("Rules")?.Get<IEnumerable<Rule>>()?.Where(x => x.IsEnabled).ToList();
 
+                // Freeze rule values into arrays to prevent concurrent enumeration issues during parallel processing
                 if (rules != null && rules.Any())
                 {
+                    foreach (var rule in rules)
+                    {
+                        if (rule.Values != null)
+                            rule.FrozenValues = rule.Values.ToArray();
+                    }
                     services.AddSingleton(rules);
                 }
                 // Bind email configuration from appsettings.json
@@ -81,6 +87,11 @@ public class Rule
     public ExpressionType ExpressionType { get; set; }
     public int DaysOld { get; set; }
     public List<string>? Values { get; set; }
+    /// <summary>
+    /// Thread-safe frozen copy of Values, set at startup for use during parallel processing.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string[]? FrozenValues { get; set; }
     /// <summary>
     /// If true, rule only matches unread emails. If false or null, read status is ignored.
     /// </summary>
