@@ -25,7 +25,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var triggers = new List<RuleTrigger>();
-        var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || (r.FrozenValues ?? r.Values?.ToArray())?.Length > 0)).ToList();
+        var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || r.Values?.Any() == true)).ToList();
 
         _logger.LogInformation("Processing batch of {EmailCount} emails against {RuleCount} rules",
             emails.Count, enabledRules.Count);

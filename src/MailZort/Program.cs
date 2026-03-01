@@ -1,46 +1,31 @@
-// See https://aka.ms/new-console-template for more information
-
-
 using MailKit;
-using MailZort;
 using MailZort.Services;
-using ServiceStack;
 
 internal class Program
 {
     static async Task Main(string[] args)
     {
-        SettingsHelper settingHelper = new();
-        IConfigurationBuilder builder = new ConfigurationBuilder()
-             .SetBasePath(settingHelper.SettingPath)
-          .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
-          .AddEnvironmentVariables();
-
-        builder = builder.AddUserSecrets<Program>();
-
-        IConfiguration configuration = builder.Build();
-
         var host = Host.CreateDefaultBuilder(args)
             .ConfigureAppConfiguration((context, config) =>
             {
-                // Use the configuration we already built
-                config.AddConfiguration(configuration);
+                config.Sources.Clear();
+                config.SetBasePath(AppDomain.CurrentDomain.BaseDirectory);
+                config.AddJsonFile("appsettings.json", optional: false);
+                config.AddEnvironmentVariables();
+                config.AddUserSecrets<Program>();
             })
             .ConfigureServices((context, services) =>
             {
-                var rules = context.Configuration.GetSection("Rules")?.Get<IEnumerable<Rule>>()?.Where(x => x.IsEnabled).ToList();
+                var rules = context.Configuration.GetSection("Rules").Get<List<Rule>>()
+                    ?.Where(x => x.IsEnabled).ToList();
 
-                // Freeze rule values into arrays to prevent concurrent enumeration issues during parallel processing
+                PrintRules(rules);
+
                 if (rules != null && rules.Any())
                 {
-                    foreach (var rule in rules)
-                    {
-                        if (rule.Values != null)
-                            rule.FrozenValues = rule.Values.ToArray();
-                    }
                     services.AddSingleton(rules);
                 }
-                // Bind email configuration from appsettings.json
+
                 var emailConfig = new EmailSettings();
                 context.Configuration.GetSection("EmailSettings").Bind(emailConfig);
 
@@ -52,13 +37,9 @@ internal class Program
                 }
 
                 services.AddSingleton(emailConfig);
-                services.AddSingleton<MailDb>();
                 services.AddSingleton<IBatchRuleProcessor, BatchRuleProcessor>();
                 services.AddSingleton<IEmailMover, EmailMover>();
-
                 services.AddSingleton<RuleMatcher>();
-                services.AddSingleton(x => settingHelper);
-                // Register the background service
                 services.AddHostedService<EmailMonitoringService>();
             })
             .ConfigureLogging(logging =>
@@ -74,6 +55,45 @@ internal class Program
 
         await host.RunAsync();
     }
+
+    private static void PrintRules(List<Rule>? rules)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=== Rules Configuration ===");
+
+        if (rules == null || !rules.Any())
+        {
+            Console.WriteLine("  WARNING: No rules loaded!");
+            Console.WriteLine("===========================");
+            Console.WriteLine();
+            return;
+        }
+
+        Console.WriteLine($"  Total rules: {rules.Count}");
+        Console.WriteLine();
+
+        for (int i = 0; i < rules.Count; i++)
+        {
+            var rule = rules[i];
+            var action = rule.Action == RuleAction.MarkImportant ? "Flag" : $"Move -> {rule.MoveTo}";
+            var values = rule.Values != null ? string.Join(", ", rule.Values) : "none";
+            var filters = new List<string>();
+            if (rule.DaysOld > 0) filters.Add($"DaysOld>={rule.DaysOld}");
+            if (rule.RequireUnread == true) filters.Add("UnreadOnly");
+            if (rule.RequireNotImportant == true) filters.Add("NotImportant");
+
+            Console.WriteLine($"  [{i + 1}] {rule.Name}");
+            Console.WriteLine($"      {rule.Folder} -> {action}");
+            Console.WriteLine($"      Match: {rule.ExpressionType} in {rule.LookIn}");
+            Console.WriteLine($"      Values: [{values}]");
+            if (filters.Any())
+                Console.WriteLine($"      Filters: {string.Join(", ", filters)}");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("===========================");
+        Console.WriteLine();
+    }
 }
 
 public class Rule
@@ -87,11 +107,6 @@ public class Rule
     public ExpressionType ExpressionType { get; set; }
     public int DaysOld { get; set; }
     public List<string>? Values { get; set; }
-    /// <summary>
-    /// Thread-safe frozen copy of Values, set at startup for use during parallel processing.
-    /// </summary>
-    [System.Text.Json.Serialization.JsonIgnore]
-    public string[]? FrozenValues { get; set; }
     /// <summary>
     /// If true, rule only matches unread emails. If false or null, read status is ignored.
     /// </summary>
@@ -110,8 +125,7 @@ public class EmailSettings
     public string? Password { get; set; }
     public int Port { get; set; }
     public bool UseSsl { get; set; }
-    public bool StoreMovedMessages { get; set; } = false;
-    public int BatchProcessingIntervalSeconds { get; set; } = 60; // Default to 60 seconds
+    public int BatchProcessingIntervalSeconds { get; set; } = 60;
     public bool InboxCleanupEnabled { get; set; } = true;
     public int InboxCleanupDaysOld { get; set; } = 30;
     public string ImportantFolder { get; set; } = "Important";
@@ -172,6 +186,18 @@ public enum RuleAction
 {
     Move,
     MarkImportant
+}
+
+public class Email
+{
+    public int MessageIndex { get; set; }
+    public string? Folder { get; set; }
+    public string? MoveTo { get; set; }
+    public string? SenderName { get; set; }
+    public string? SenderEmailaddress { get; set; }
+    public DateTimeOffset Date { get; set; }
+    public string? Subject { get; set; }
+    public string? Body { get; set; }
 }
 
 public class EmailFlagOperation

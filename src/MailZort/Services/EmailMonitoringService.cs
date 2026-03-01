@@ -1,11 +1,9 @@
 using System.Collections.Concurrent;
-using System.Data;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using MimeKit;
-using ServiceStack.OrmLite;
 
 namespace MailZort.Services
 {
@@ -14,7 +12,6 @@ namespace MailZort.Services
     {
         private readonly ILogger<EmailMonitoringService> _logger;
         private readonly EmailSettings _config;
-        private readonly MailDb _mailDb;
         private ImapClient? _client;
         private CancellationTokenSource? _idleDoneSource;
         private volatile bool _newMessagesFlag = false;
@@ -33,13 +30,11 @@ namespace MailZort.Services
         public EmailMonitoringService(
             ILogger<EmailMonitoringService> logger,
             EmailSettings config,
-            MailDb mailDb,
             IEmailMover emailMover,
             IBatchRuleProcessor batchRuleProcessor)
         {
             _logger = logger;
             _config = config;
-            _mailDb = mailDb;
             _emailMover = emailMover;
             _batchRuleProcessor = batchRuleProcessor;
         }
@@ -563,12 +558,6 @@ namespace MailZort.Services
                 // Perform the move
                 await sourceFolder.MoveToAsync(moveOperation.EmailIds, destinationFolder);
 
-                // Save to database if enabled
-                if (_config.StoreMovedMessages)
-                {
-                    SaveEmailsToDatabase(moveOperation.Emails);
-                }
-
                 _logger.LogInformation("📁 Moved {Count} emails from {Source} to {Destination}",
                     moveOperation.Emails.Count, moveOperation.SourceFolder, moveOperation.DestinationFolder);
             }
@@ -597,22 +586,6 @@ namespace MailZort.Services
             }
 
             return _client!.GetFolder(folderName);
-        }
-
-        private void SaveEmailsToDatabase(List<Email> emails)
-        {
-            using var dbConnection = _mailDb.GetConnection();
-            foreach (var email in emails)
-            {
-                try
-                {
-                    dbConnection.Insert(email);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error saving email {MessageIndex} to database", email.MessageIndex);
-                }
-            }
         }
 
         private void OnCountChanged(object? sender, EventArgs e)

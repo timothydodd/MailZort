@@ -50,7 +50,7 @@ public class RuleMatcher
 
         if (passesAge && passesStatus)
         {
-            var ruleValues = string.Join(", ", rule.FrozenValues ?? rule.Values?.ToArray() ?? Array.Empty<string>());
+            var ruleValues = string.Join(", ", rule.Values ?? new List<string>());
             _logger.LogInformation("RULE MATCHED! Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}', RuleValues: [{RuleValues}]",
                 rule.Name, value, matchResult.MatchLocation, email.Subject, ruleValues);
             return true;
@@ -78,8 +78,7 @@ public class RuleMatcher
                 return false;
             }
         }
-        var valuesToCheck = rule.FrozenValues ?? rule.Values?.ToArray() ?? Array.Empty<string>();
-        foreach (var value in valuesToCheck)
+        foreach (var value in rule.Values!)
         {
             _logger.LogDebug("Testing value: '{Value}' with expression type: {ExpressionType}", value, rule.ExpressionType);
 
