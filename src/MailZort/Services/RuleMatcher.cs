@@ -51,7 +51,7 @@ public class RuleMatcher
         if (passesAge && passesStatus)
         {
             var ruleValues = string.Join(", ", rule.Values ?? new List<string>());
-            _logger.LogInformation("RULE MATCHED! Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}', RuleValues: [{RuleValues}]",
+            _logger.LogDebug("Rule matched. Rule: {RuleId}, Value: '{Value}', Location: {Location}, Subject: '{Subject}', RuleValues: [{RuleValues}]",
                 rule.Name, value, matchResult.MatchLocation, email.Subject, ruleValues);
             return true;
         }

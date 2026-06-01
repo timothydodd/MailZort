@@ -35,7 +35,7 @@ public class EmailMover : IEmailMover
             })
             .ToList();
 
-        _logger.LogInformation("📌 Created {OperationCount} flag operations for {EmailCount} emails",
+        _logger.LogDebug("Created {OperationCount} flag operations for {EmailCount} emails",
             grouped.Count, flagTriggers.Count);
 
         return grouped;
@@ -79,7 +79,7 @@ public class EmailMover : IEmailMover
             }
         }
 
-        _logger.LogInformation("📋 Queued {OperationCount} move operations for {EmailCount} emails",
+        _logger.LogDebug("Queued {OperationCount} move operations for {EmailCount} emails",
             queuedOperations, triggers.Count);
 
         return ops;

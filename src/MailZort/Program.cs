@@ -193,6 +193,7 @@ public class Email
     public int MessageIndex { get; set; }
     public string? Folder { get; set; }
     public string? MoveTo { get; set; }
+    public string? Rule { get; set; }
     public string? SenderName { get; set; }
     public string? SenderEmailaddress { get; set; }
     public DateTimeOffset Date { get; set; }

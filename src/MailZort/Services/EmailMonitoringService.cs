@@ -43,7 +43,7 @@ namespace MailZort.Services
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _serviceCancellationToken = stoppingToken;
-            _logger.LogInformation("📧 Email monitoring service starting...");
+            _logger.LogInformation("Email monitoring service starting");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -53,7 +53,7 @@ namespace MailZort.Services
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.LogInformation("📧 Email monitoring service is stopping...");
+                    _logger.LogInformation("Email monitoring service is stopping");
                     break;
                 }
                 catch (Exception ex)
@@ -76,7 +76,7 @@ namespace MailZort.Services
                 var inbox = _client.Inbox;
                 await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-                _logger.LogInformation("✅ Connected successfully. Processing existing emails...");
+                _logger.LogInformation("Connected to mail server");
                 await ProcessMails(false, cancellationToken);
                 _lastFullReprocess = DateTime.UtcNow; // Track when we last did a full reprocess
 
@@ -84,7 +84,7 @@ namespace MailZort.Services
                 inbox.CountChanged += OnCountChanged;
                 inbox.MessageExpunged += OnMessageExpunged;
 
-                _logger.LogInformation("👀 Now monitoring for new emails...");
+                _logger.LogDebug("Now monitoring for new emails");
                 await MonitorForNewEmailsAsync(cancellationToken);
             }
             finally
@@ -101,7 +101,7 @@ namespace MailZort.Services
 
         private async Task ConnectToServerAsync(ImapClient client, CancellationToken cancellationToken)
         {
-            _logger.LogInformation("🔌 Connecting to IMAP server {Server}:{Port}...", _config.Server, _config.Port);
+            _logger.LogDebug("Connecting to IMAP server {Server}:{Port}", _config.Server, _config.Port);
 
             await client.ConnectAsync(_config.Server, _config.Port, SecureSocketOptions.SslOnConnect, cancellationToken);
             await client.AuthenticateAsync(_config.Username, _config.Password, cancellationToken);
@@ -113,7 +113,7 @@ namespace MailZort.Services
                 return;
 
             var totalEmails = _client.Inbox.Count;
-            _logger.LogInformation("📬 Processing {TotalEmails} existing emails...", totalEmails);
+            _logger.LogDebug("Processing {TotalEmails} existing emails", totalEmails);
 
 
             IList<IMessageSummary>? fetchedMessages = null;
@@ -130,7 +130,7 @@ namespace MailZort.Services
             }
             if (fetchedMessages == null || fetchedMessages.Count == 0)
             {
-                _logger.LogInformation("No emails to process in the inbox.");
+                _logger.LogDebug("No emails to process in the inbox");
                 return;
             }
             for (int i = 0; i < fetchedMessages.Count; i++)
@@ -150,7 +150,7 @@ namespace MailZort.Services
             }
 
             _lastProcessedCount = totalEmails;
-            _logger.LogInformation("✅ Finished processing {TotalEmails} existing emails", totalEmails);
+            _logger.LogDebug("Finished processing {TotalEmails} existing emails", totalEmails);
             var triggers = await this.ProcessBatchAsync(emailsToProcess);
 
             // Run inbox cleanup after rule processing
@@ -174,7 +174,7 @@ namespace MailZort.Services
 
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            _logger.LogInformation("🔄 Starting batch processing of {EmailCount} emails...", emailsToProcess.Count);
+            _logger.LogDebug("Starting batch processing of {EmailCount} emails", emailsToProcess.Count);
 
             // Process emails in batch
             var triggers = _batchRuleProcessor.ProcessEmailBatch(emailsToProcess);
@@ -191,7 +191,7 @@ namespace MailZort.Services
                 }
 
                 var ops = _emailMover.ExecuteTriggers(triggers);
-                _logger.LogInformation("📦 Executed {OperationCount} move operations and {FlagCount} flag operations",
+                _logger.LogDebug("Executed {OperationCount} move operations and {FlagCount} flag operations",
                     ops.Count, flagOps.Count);
                 foreach (var op in ops)
                 {
@@ -209,7 +209,7 @@ namespace MailZort.Services
                 EmailsMoved = emailsMoved,
                 ProcessingTime = stopwatch.Elapsed
             };
-            _logger.LogInformation("🔄 Batch completed: {EmailsProcessed} emails, {RulesMatched} matches, {EmailsMoved} moved in {ProcessingTime}ms",
+            _logger.LogInformation("Processed {EmailsProcessed} emails, {RulesMatched} matched, {EmailsMoved} moved in {ProcessingTime}ms",
                  batchEventArgs.EmailsProcessed, batchEventArgs.RulesMatched, batchEventArgs.EmailsMoved, batchEventArgs.ProcessingTime.TotalMilliseconds);
 
             return triggers;
@@ -250,7 +250,7 @@ namespace MailZort.Services
             };
             if (emailArgs.IsImportant)
             {
-                _logger.LogInformation("⭐ Important email detected (skipping rules): {Subject} from {Sender} at {Date}",
+                _logger.LogDebug("Important email detected (skipping rules): {Subject} from {Sender} at {Date}",
                     emailArgs.Subject, emailArgs.SenderName, emailArgs.ReceivedDate);
             }
             processList.Add(emailArgs);
@@ -275,7 +275,7 @@ namespace MailZort.Services
             var important = candidates.Where(e => e.IsImportant).ToList();
             var nonImportant = candidates.Where(e => !e.IsImportant).ToList();
 
-            _logger.LogInformation("🧹 Inbox cleanup: {ImportantCount} important → {ImportantFolder}, {NonImportantCount} non-important → Trash",
+            _logger.LogInformation("Inbox cleanup: {ImportantCount} important -> {ImportantFolder}, {NonImportantCount} non-important -> Trash",
                 important.Count, _config.ImportantFolder, nonImportant.Count);
 
             if (important.Any())
@@ -293,7 +293,8 @@ namespace MailZort.Services
                         SenderEmailaddress = e.SenderAddress,
                         Date = e.ReceivedDate,
                         Folder = "INBOX",
-                        MoveTo = _config.ImportantFolder
+                        MoveTo = _config.ImportantFolder,
+                        Rule = "Inbox cleanup"
                     }).ToList()
                 });
             }
@@ -313,7 +314,8 @@ namespace MailZort.Services
                         SenderEmailaddress = e.SenderAddress,
                         Date = e.ReceivedDate,
                         Folder = "INBOX",
-                        MoveTo = "Trash"
+                        MoveTo = "Trash",
+                        Rule = "Inbox cleanup"
                     }).ToList()
                 });
             }
@@ -329,7 +331,7 @@ namespace MailZort.Services
                     var timeSinceLastReprocess = DateTime.UtcNow - _lastFullReprocess;
                     if (timeSinceLastReprocess.TotalMilliseconds >= HourlyReprocessIntervalMs)
                     {
-                        _logger.LogInformation("⏰ Hourly reprocessing time reached. Exiting IDLE to reprocess all emails...");
+                        _logger.LogDebug("Reprocess interval reached. Exiting IDLE to reprocess all emails");
                         await ProcessMails(false, stoppingToken);
                         _lastFullReprocess = DateTime.UtcNow;
                         continue; // Skip the IDLE cycle and immediately check again
@@ -373,10 +375,10 @@ namespace MailZort.Services
 
                     try
                     {
-                        // Enter IDLE mode – will block until done token is canceled or timeout
+                        // Enter IDLE mode - will block until done token is canceled or timeout
                         if (_client.Capabilities.HasFlag(ImapCapabilities.Idle))
                         {
-                            _logger.LogDebug("📱 Entering IDLE mode for {Timeout} (next full reprocess in {NextReprocess})",
+                            _logger.LogDebug("Entering IDLE mode for {Timeout} (next full reprocess in {NextReprocess})",
                                 actualTimeout, remainingTime);
                             await _client.IdleAsync(idleDone.Token, stoppingToken);
                         }
@@ -391,7 +393,7 @@ namespace MailZort.Services
                     {
                         if (stoppingToken.IsCancellationRequested)
                         {
-                            _logger.LogInformation("📧 Monitoring stopped due to service shutdown");
+                            _logger.LogDebug("Monitoring stopped due to service shutdown");
                             break;
                         }
                         // Expected when _idleDoneSource is triggered by event handlers, move queue, or timeout
@@ -473,7 +475,7 @@ namespace MailZort.Services
             if (processedCount > 0)
             {
                 stopwatch.Stop();
-                _logger.LogInformation("✅ Processed {Count} move operations in {ElapsedMs}ms",
+                _logger.LogDebug("Processed {Count} move operations in {ElapsedMs}ms",
                     processedCount, stopwatch.ElapsedMilliseconds);
             }
         }
@@ -507,7 +509,7 @@ namespace MailZort.Services
 
             if (processedCount > 0)
             {
-                _logger.LogInformation("⭐ Processed {Count} flag operations", processedCount);
+                _logger.LogDebug("Processed {Count} flag operations", processedCount);
             }
         }
 
@@ -523,7 +525,7 @@ namespace MailZort.Services
                 await folder.OpenAsync(FolderAccess.ReadWrite);
                 await folder.AddFlagsAsync(flagOperation.EmailIds, MessageFlags.Flagged, true);
 
-                _logger.LogInformation("⭐ Flagged {Count} emails as important in {Folder}",
+                _logger.LogInformation("Flagged {Count} emails as important in {Folder}",
                     flagOperation.EmailIds.Count, flagOperation.SourceFolder);
             }
             catch (Exception ex)
@@ -558,7 +560,13 @@ namespace MailZort.Services
                 // Perform the move
                 await sourceFolder.MoveToAsync(moveOperation.EmailIds, destinationFolder);
 
-                _logger.LogInformation("📁 Moved {Count} emails from {Source} to {Destination}",
+                foreach (var email in moveOperation.Emails)
+                {
+                    _logger.LogInformation("Moved email: from='{From}' subject='{Subject}' to='{Destination}' rule='{Rule}'",
+                        email.SenderEmailaddress, email.Subject, moveOperation.DestinationFolder, email.Rule ?? "unknown");
+                }
+
+                _logger.LogDebug("Moved {Count} emails from {Source} to {Destination}",
                     moveOperation.Emails.Count, moveOperation.SourceFolder, moveOperation.DestinationFolder);
             }
             catch (Exception ex)
@@ -593,7 +601,7 @@ namespace MailZort.Services
             var folder = (IMailFolder)sender!;
             if (folder.Count > _lastProcessedCount)
             {
-                _logger.LogDebug("[Event] Inbox count increased to {CurrentCount} (was {LastCount}) – new message likely.",
+                _logger.LogDebug("[Event] Inbox count increased to {CurrentCount} (was {LastCount}) - new message likely.",
                     folder.Count, _lastProcessedCount);
                 _newMessagesFlag = true;
                 var source = _idleDoneSource;
@@ -625,7 +633,7 @@ namespace MailZort.Services
 
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("📧 Email monitoring service is stopping...");
+            _logger.LogInformation("Email monitoring service is stopping");
 
             // Cancel any ongoing IDLE operation
             var source = _idleDoneSource;

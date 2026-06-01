@@ -27,7 +27,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         var triggers = new List<RuleTrigger>();
         var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || r.Values?.Any() == true)).ToList();
 
-        _logger.LogInformation("Processing batch of {EmailCount} emails against {RuleCount} rules",
+        _logger.LogDebug("Processing batch of {EmailCount} emails against {RuleCount} rules",
             emails.Count, enabledRules.Count);
 
         foreach (var email in emails)
@@ -37,7 +37,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         }
 
         stopwatch.Stop();
-        _logger.LogInformation("Batch processing completed in {ElapsedMs}ms. Found {TriggerCount} rule matches",
+        _logger.LogDebug("Batch processing completed in {ElapsedMs}ms. Found {TriggerCount} rule matches",
             stopwatch.ElapsedMilliseconds, triggers.Count);
 
         return triggers;
@@ -84,6 +84,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
                 MessageIndex = (int)email.UniqueId.Id,
                 Folder = email.Folder,
                 MoveTo = rule.Action == RuleAction.MarkImportant ? $"{rule.Name}->Flagged" : $"{rule.Name}->{rule.MoveTo}",
+                Rule = rule.Name,
                 Subject = email.Subject,
                 SenderName = email.SenderName,
                 SenderEmailaddress = email.SenderAddress,
