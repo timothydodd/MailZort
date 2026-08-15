@@ -1,0 +1,208 @@
+@page "/rules"
+@attribute [Authorize]
+@inject IRuleStore RuleStore
+
+<PageTitle>Rules - MailZort</PageTitle>
+
+<h1>Rules</h1>
+<p class="muted">
+    Rules run top to bottom and the first match wins, so order matters. Changes apply on the next
+    pass - no restart.
+</p>
+
+@if (Message != null)
+{
+    <div class="alert info">@Message</div>
+}
+
+@if (Editing == null)
+{
+    <div class="toolbar">
+        <button class="primary" @onclick="NewRule">New rule</button>
+    </div>
+
+    <div class="table-wrap">
+    <table class="grid">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Match</th>
+                <th>Then</th>
+                <th>Matched</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var (rule, index) in All.Select((r, i) => (r, i)))
+            {
+                <tr class="@(rule.IsEnabled ? null : "disabled-row")">
+                    <td class="muted">@(index + 1)</td>
+                    <td>
+                        <strong>@rule.Name</strong>
+                        <div class="muted small">@rule.Folder</div>
+                    </td>
+                    <td class="small">
+                        @((ExpressionType)rule.ExpressionType) in @((LookIn)rule.LookIn)
+                        @if (rule.DaysOld > 0)
+                        {
+                            <div class="muted">older than @rule.DaysOld days</div>
+                        }
+                        @if (rule.RequireUnread == true)
+                        {
+                            <div class="muted">unread only</div>
+                        }
+                    </td>
+                    <td class="small">
+                        @(rule.Action == (int)RuleAction.MarkImportant ? "Flag as important" : $"Move to {rule.MoveTo}")
+                    </td>
+                    <td class="small muted">
+                        @rule.MatchCount
+                        @if (rule.LastMatchedUtc.HasValue)
+                        {
+                            <div>@rule.LastMatchedUtc.Value.ToLocalTime().ToString("g")</div>
+                        }
+                    </td>
+                    <td class="actions nowrap">
+                        <button class="small" @onclick="() => Move(rule.Id, -1)">&uarr;</button>
+                        <button class="small" @onclick="() => Move(rule.Id, 1)">&darr;</button>
+                        <button class="small" @onclick="() => Toggle(rule)">@(rule.IsEnabled ? "Disable" : "Enable")</button>
+                        <button class="small" @onclick="() => Edit(rule.Id)">Edit</button>
+                        <button class="small danger" @onclick="() => Delete(rule.Id)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+}
+else
+{
+    <div class="panel">
+        <h2>@(Editing.Id == 0 ? "New rule" : $"Edit '{Editing.Name}'")</h2>
+
+        <div class="form-grid">
+            <label>Name<input @bind="Editing.Name" /></label>
+            <label>Folder to watch<input @bind="Editing.Folder" /></label>
+
+            <label>
+                Action
+                <select @bind="Editing.Action">
+                    <option value="0">Move</option>
+                    <option value="1">Flag as important</option>
+                </select>
+            </label>
+            <label>Move to<input @bind="Editing.MoveTo" disabled="@(Editing.Action == 1)" /></label>
+
+            <label>
+                Look in
+                <select @bind="Editing.LookIn">
+                    @foreach (var value in Enum.GetValues<LookIn>())
+                    {
+                        <option value="@((int)value)">@value</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Match type
+                <select @bind="Editing.ExpressionType">
+                    @foreach (var value in Enum.GetValues<ExpressionType>())
+                    {
+                        <option value="@((int)value)">@value</option>
+                    }
+                </select>
+            </label>
+
+            <label>Only if older than (days, 0 = any)<input type="number" @bind="Editing.DaysOld" /></label>
+            <label class="checkbox"><input type="checkbox" @bind="Editing.IsEnabled" /> Enabled</label>
+            <label class="checkbox"><input type="checkbox" @bind="UnreadOnly" /> Unread only</label>
+            <label class="checkbox"><input type="checkbox" @bind="NotImportantOnly" /> Skip important</label>
+        </div>
+
+        <label class="block">
+            Values (one per line)
+            <textarea rows="8" @bind="ValuesText"></textarea>
+        </label>
+
+        <div class="toolbar">
+            <button class="primary" @onclick="Save">Save</button>
+            <button @onclick="() => Editing = null">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DbRule> All = new();
+    private DbRule? Editing;
+    private string ValuesText = string.Empty;
+    private bool UnreadOnly;
+    private bool NotImportantOnly;
+    private string? Message;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync() => All = await RuleStore.GetAllAsync();
+
+    private void NewRule()
+    {
+        Editing = new DbRule { Folder = "Inbox", IsEnabled = true };
+        ValuesText = string.Empty;
+        UnreadOnly = false;
+        NotImportantOnly = false;
+    }
+
+    private async Task Edit(int id)
+    {
+        var found = await RuleStore.GetAsync(id);
+        if (found == null)
+            return;
+
+        Editing = found.Value.rule;
+        ValuesText = string.Join(Environment.NewLine, found.Value.values);
+        UnreadOnly = Editing.RequireUnread == true;
+        NotImportantOnly = Editing.RequireNotImportant == true;
+    }
+
+    private async Task Save()
+    {
+        if (Editing == null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(Editing.Name))
+        {
+            Message = "Give the rule a name.";
+            return;
+        }
+
+        Editing.RequireUnread = UnreadOnly ? true : null;
+        Editing.RequireNotImportant = NotImportantOnly ? true : null;
+
+        var values = ValuesText
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        await RuleStore.SaveAsync(Editing, values);
+        Message = $"Saved '{Editing.Name}'.";
+        Editing = null;
+        await ReloadAsync();
+    }
+
+    private async Task Toggle(DbRule rule)
+    {
+        await RuleStore.SetEnabledAsync(rule.Id, !rule.IsEnabled);
+        await ReloadAsync();
+    }
+
+    private async Task Move(int id, int direction)
+    {
+        await RuleStore.MoveAsync(id, direction);
+        await ReloadAsync();
+    }
+
+    private async Task Delete(int id)
+    {
+        await RuleStore.DeleteAsync(id);
+        Message = "Rule deleted.";
+        await ReloadAsync();
+    }
+}

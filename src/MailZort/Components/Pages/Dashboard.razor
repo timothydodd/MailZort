@@ -1,0 +1,311 @@
+@page "/"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@inject IActivityStore ActivityStore
+@inject ISenderStore Senders
+@inject IRuleStore Rules
+@inject IPendingActionStore PendingActions
+@inject MailServiceStatus Status
+
+<PageTitle>Dashboard - MailZort</PageTitle>
+
+<div class="dash">
+
+    <header class="dash-head">
+        <div>
+            <p class="eyebrow">Mail sorting</p>
+            <h1>Dashboard</h1>
+        </div>
+        @if (Status.Mailbox != null)
+        {
+            <div class="dash-head-meta">
+                <span>@Status.Mailbox</span>
+                <span class="muted">@Status.Server</span>
+            </div>
+        }
+    </header>
+
+    <section class="status @StatusClass">
+        <div class="status-main">
+            <span class="status-dot"></span>
+            <div>
+                <strong class="status-headline">@StatusHeadline</strong>
+                <p class="status-activity">@Status.Activity</p>
+            </div>
+        </div>
+        <div class="status-metrics">
+            <div>
+                <span class="metric-label">Next sweep</span>
+                <span class="metric-value">@(Status.NextFullPassUtc is { } n ? Relative(n) : "—")</span>
+            </div>
+            <div>
+                <span class="metric-label">Inbox</span>
+                <span class="metric-value">@Status.InboxCount</span>
+            </div>
+            <div>
+                <span class="metric-label">Uptime</span>
+                <span class="metric-value">@Duration(Status.Uptime)</span>
+            </div>
+        </div>
+    </section>
+
+    @if (Status.LastError != null && !Status.Connected)
+    {
+        <div class="alert error">
+            @Status.LastError
+            @if (Status.NextRetryUtc is { } retry)
+            {
+                <span> &mdash; retrying @Relative(retry).</span>
+            }
+        </div>
+    }
+
+    @if (_failed.Count > 0)
+    {
+        <div class="alert warn">
+            <p>@_failed.Count action@(_failed.Count == 1 ? "" : "s") could not be carried out.</p>
+            <ul class="failed-list">
+                @foreach (var action in _failed)
+                {
+                    <li>
+                        <span class="failed-subject">@(string.IsNullOrWhiteSpace(action.Subject) ? "(no subject)" : action.Subject)</span>
+                        <span class="route">@action.SourceFolder <i>&rarr;</i> @action.TargetFolder</span>
+                        <span class="muted small">@action.Error</span>
+                        <button class="small" @onclick="() => Retry(action.Id)">Retry</button>
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    <section class="flow">
+        <div class="flow-head">
+            <h2>Last 24 hours</h2>
+            <span class="flow-total">@Handled24h <span>handled</span></span>
+        </div>
+
+        @if (Handled24h == 0)
+        {
+            <p class="flow-empty">No mail sorted yet today. Rules run on every new message and sweep the whole mailbox every two hours.</p>
+        }
+        else
+        {
+            <div class="flow-bar" role="img" aria-label="@($"{_moved24h} moved, {_deleted24h} deleted, {_rescued24h} moved back")">
+                @if (_moved24h > 0)
+                {
+                    <span class="seg seg-moved" style="width:@Percent(_moved24h)%"></span>
+                }
+                @if (_deleted24h > 0)
+                {
+                    <span class="seg seg-deleted" style="width:@Percent(_deleted24h)%"></span>
+                }
+                @if (_rescued24h > 0)
+                {
+                    <span class="seg seg-rescued" style="width:@Percent(_rescued24h)%"></span>
+                }
+            </div>
+            <ul class="flow-legend">
+                <li><span class="swatch swatch-moved"></span><b>@_moved24h</b> moved</li>
+                <li><span class="swatch swatch-deleted"></span><b>@_deleted24h</b> deleted</li>
+                <li><span class="swatch swatch-rescued"></span><b>@_rescued24h</b> moved back</li>
+            </ul>
+        }
+    </section>
+
+    <div class="dash-split">
+        <section class="panel">
+            <h2>Service</h2>
+            <dl class="facts">
+                <div><dt>Connection</dt><dd>@(Status.Connected ? "Connected" : "Not connected")</dd></div>
+                <div><dt>Watching</dt><dd>@(Status.SupportsIdle ? "Push (IDLE)" : "Polling")</dd></div>
+                <div><dt>Connected for</dt><dd>@(Status.ConnectedSinceUtc is { } since ? Duration(DateTime.UtcNow - since) : "—")</dd></div>
+                <div><dt>Last pass</dt><dd>@(Status.LastPassEndedUtc is { } p ? Relative(p) : "not yet")</dd></div>
+                <div><dt>Last full sweep</dt><dd>@(Status.LastFullPassUtc is { } f ? Relative(f) : "not yet")</dd></div>
+                <div>
+                    <dt>Swept</dt>
+                    <dd>
+                        @if (Status.LastPassDuration is { } d)
+                        {
+                            <text>@Status.LastPassEmailCount emails in @($"{d.TotalSeconds:0.0}")s</text>
+                        }
+                        else
+                        {
+                            <text>—</text>
+                        }
+                    </dd>
+                </div>
+                <div><dt>Matched</dt><dd>@Status.LastPassMatchCount</dd></div>
+                <div><dt>Queued actions</dt><dd>@_pending</dd></div>
+            </dl>
+        </section>
+
+        <section class="panel">
+            <h2>Sorting</h2>
+            <dl class="facts facts-single">
+                <div><dt>Rules</dt><dd><a href="/rules">@_ruleCount</a></dd></div>
+                <div><dt>Trusted senders</dt><dd class="good"><a href="/senders">@_trusted</a></dd></div>
+                <div><dt>Blacklisted senders</dt><dd class="bad"><a href="/senders">@_blacklisted</a></dd></div>
+            </dl>
+        </section>
+    </div>
+
+    <section class="recent">
+        <div class="flow-head">
+            <h2>Latest activity</h2>
+            <a href="/activity">Full history &rarr;</a>
+        </div>
+
+        @if (_recent.Count == 0)
+        {
+            <p class="flow-empty">Nothing logged yet. Every move, deletion and trust decision shows up here.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+    <table class="grid">
+                <tbody>
+                    @foreach (var entry in _recent)
+                    {
+                        <tr>
+                            <td class="stamp">@entry.CreatedUtc.ToLocalTime().ToString("HH:mm")</td>
+                            <td class="nowrap"><span class="dot dot-@DotClass(entry.EventType)"></span>@entry.EventType.ToLowerInvariant()</td>
+                            <td class="subject">@(string.IsNullOrWhiteSpace(entry.Subject) ? entry.Detail : entry.Subject)</td>
+                            <td class="small muted">@entry.SenderAddress</td>
+                            <td class="small route">
+                                @if (!string.IsNullOrWhiteSpace(entry.ToFolder))
+                                {
+                                    <i>&rarr;</i> @entry.ToFolder
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+    </div>
+        }
+    </section>
+
+</div>
+
+@code {
+    private int _moved24h, _deleted24h, _rescued24h, _trusted, _blacklisted, _ruleCount, _pending;
+    private List<DbActivity> _recent = new();
+    private List<DbPendingAction> _failed = new();
+    private PeriodicTimer? _timer;
+    private Task? _ticking;
+
+    private int Handled24h => _moved24h + _deleted24h + _rescued24h;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ActivityStore.Logged += OnActivityLogged;
+        Status.Changed += OnStatusChanged;
+        await LoadAsync();
+
+        // "Next sweep in 12 min" has to keep counting down on its own.
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        _ticking = TickAsync();
+    }
+
+    private async Task TickAsync()
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync())
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Page closed.
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var since = DateTime.UtcNow.AddDays(-1);
+        _moved24h = await ActivityStore.CountSinceAsync(since, ActivityType.Moved);
+        _deleted24h = await ActivityStore.CountSinceAsync(since, ActivityType.Purged);
+        _rescued24h = await ActivityStore.CountSinceAsync(since, ActivityType.Restored);
+        (_trusted, _blacklisted) = await Senders.CountsAsync();
+        _ruleCount = await Rules.CountAsync();
+        _pending = await PendingActions.PendingCountAsync();
+        _failed = await PendingActions.FailedAsync(10);
+        _recent = await ActivityStore.QueryAsync(new ActivityFilter(Limit: 12));
+    }
+
+    private async Task Retry(int id)
+    {
+        await PendingActions.RetryAsync(id);
+        await LoadAsync();
+    }
+
+    private int Percent(int value) => Handled24h == 0 ? 0 : (int)Math.Round(value * 100d / Handled24h);
+
+    private void OnStatusChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnActivityLogged(DbActivity entry) =>
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAsync();
+            StateHasChanged();
+        });
+
+    private string StatusHeadline => Status.State switch
+    {
+        MailServiceState.Idle or MailServiceState.Processing => "Running",
+        MailServiceState.Connecting => "Connecting",
+        MailServiceState.Reconnecting => "Disconnected",
+        MailServiceState.Stopped => "Stopped",
+        _ => "Starting"
+    };
+
+    private string StatusClass => Status.State switch
+    {
+        MailServiceState.Idle or MailServiceState.Processing => "status-good",
+        MailServiceState.Reconnecting or MailServiceState.Stopped => "status-bad",
+        _ => "status-warn"
+    };
+
+    private static string DotClass(string eventType) => eventType switch
+    {
+        ActivityType.Purged or ActivityType.Blacklisted => "bad",
+        ActivityType.Trusted or ActivityType.Restored => "good",
+        _ => "moved"
+    };
+
+    private static string Relative(DateTime utc)
+    {
+        var delta = utc - DateTime.UtcNow;
+        if (delta > TimeSpan.Zero)
+            return $"in {Duration(delta)}";
+
+        var ago = Duration(-delta);
+        return ago == "moments" ? "just now" : $"{ago} ago";
+    }
+
+    private static string Duration(TimeSpan span)
+    {
+        if (span.TotalSeconds < 45) return "moments";
+        if (span.TotalMinutes < 60) return $"{span.TotalMinutes:0} min";
+        if (span.TotalHours < 24) return $"{span.TotalHours:0.0} hours";
+        return $"{span.TotalDays:0.0} days";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        ActivityStore.Logged -= OnActivityLogged;
+        Status.Changed -= OnStatusChanged;
+        _timer?.Dispose();
+
+        if (_ticking != null)
+        {
+            try { await _ticking; } catch (OperationCanceledException) { }
+        }
+    }
+}

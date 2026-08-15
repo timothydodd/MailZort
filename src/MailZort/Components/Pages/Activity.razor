@@ -1,0 +1,184 @@
+@page "/activity"
+@attribute [Authorize]
+@implements IDisposable
+@inject IActivityStore ActivityStore
+@inject PortalActions Actions
+@inject AuthenticationStateProvider AuthProvider
+
+<PageTitle>Activity - MailZort</PageTitle>
+
+<h1>Activity</h1>
+<p class="muted">Everything MailZort has done. Put an email back where it was, or trust the sender so it stops happening.</p>
+
+@if (Message != null)
+{
+    <div class="alert info">@Message</div>
+}
+
+<div class="toolbar">
+    <input placeholder="Search subject, sender or folder" @bind="Search" @bind:event="oninput" @onkeyup="OnSearchKey" />
+    <select @bind="EventType" @bind:after="ReloadAsync">
+        <option value="">All events</option>
+        <option value="@ActivityType.Moved">Moved</option>
+        <option value="@ActivityType.Purged">Deleted</option>
+        <option value="@ActivityType.Flagged">Flagged</option>
+        <option value="@ActivityType.Trusted">Trusted</option>
+        <option value="@ActivityType.Blacklisted">Blacklisted</option>
+        <option value="@ActivityType.Restored">Moved back</option>
+    </select>
+    <label class="checkbox">
+        <input type="checkbox" @bind="UndoableOnly" @bind:after="ReloadAsync" />
+        Only reversible
+    </label>
+    <button @onclick="ReloadAsync">Refresh</button>
+</div>
+
+@if (Entries.Count == 0)
+{
+    <p class="muted">No activity yet. MailZort logs here as it sorts.</p>
+}
+else
+{
+    <div class="table-wrap">
+    <table class="grid">
+        <thead>
+            <tr>
+                <th>When</th>
+                <th>What</th>
+                <th>Subject</th>
+                <th>From</th>
+                <th>Where it went</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var entry in Entries)
+            {
+                <tr class="@(entry.UndoneUtc != null ? "undone" : null)">
+                    <td class="nowrap muted small">@entry.CreatedUtc.ToLocalTime().ToString("g")</td>
+                    <td><span class="tag @TagClass(entry.EventType)">@Label(entry)</span></td>
+                    <td class="subject">@(string.IsNullOrWhiteSpace(entry.Subject) ? "(no subject)" : entry.Subject)</td>
+                    <td class="small">
+                        @if (!string.IsNullOrWhiteSpace(entry.SenderName))
+                        {
+                            <div>@entry.SenderName</div>
+                        }
+                        <div class="muted">@entry.SenderAddress</div>
+                    </td>
+                    <td class="small">
+                        @if (!string.IsNullOrWhiteSpace(entry.ToFolder))
+                        {
+                            <span class="muted">@entry.FromFolder</span>
+                            <span> &rarr; </span>
+                            <strong>@entry.ToFolder</strong>
+                        }
+                        else
+                        {
+                            <span class="muted">@entry.Detail</span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(entry.RuleName))
+                        {
+                            <div class="muted small">rule: @entry.RuleName</div>
+                        }
+                    </td>
+                    <td class="actions nowrap">
+                        @if (entry.CanUndo && entry.UndoneUtc == null)
+                        {
+                            <button class="small" @onclick="() => MoveBack(entry.Id)">Move back</button>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(entry.SenderAddress))
+                        {
+                            <button class="small" @onclick="() => Whitelist(entry.Id)">Whitelist</button>
+                            <button class="small danger" @onclick="() => Blacklist(entry.Id)">Blacklist</button>
+                        }
+                        @if (entry.UndoneUtc != null)
+                        {
+                            <span class="muted small">moved back</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+}
+
+@code {
+    private List<DbActivity> Entries = new();
+    private string? Search;
+    private string EventType = string.Empty;
+    private bool UndoableOnly;
+    private string? Message;
+    private string _user = "portal";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        _user = state.User.Identity?.Name ?? "portal";
+
+        ActivityStore.Logged += OnActivityLogged;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        Entries = await ActivityStore.QueryAsync(new ActivityFilter(
+            Search: string.IsNullOrWhiteSpace(Search) ? null : Search,
+            EventType: string.IsNullOrEmpty(EventType) ? null : EventType,
+            UndoableOnly: UndoableOnly,
+            Limit: 300));
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await ReloadAsync();
+        }
+    }
+
+    // The mail loop raises this from its own thread - hop back onto the circuit before touching state.
+    private void OnActivityLogged(DbActivity entry) =>
+        _ = InvokeAsync(async () =>
+        {
+            await ReloadAsync();
+            StateHasChanged();
+        });
+
+    private async Task MoveBack(int id)
+    {
+        Message = await Actions.MoveBackAsync(id, _user);
+        await ReloadAsync();
+    }
+
+    private async Task Whitelist(int id)
+    {
+        Message = await Actions.WhitelistAsync(id, _user);
+        await ReloadAsync();
+    }
+
+    private async Task Blacklist(int id)
+    {
+        Message = await Actions.BlacklistAsync(id, _user);
+        await ReloadAsync();
+    }
+
+    private static string Label(DbActivity entry) => entry.EventType switch
+    {
+        ActivityType.Purged => "deleted",
+        ActivityType.Restored => "moved back",
+        ActivityType.TrustRevoked => "trust revoked",
+        _ => entry.EventType.ToLowerInvariant()
+    };
+
+    private static string TagClass(string eventType) => eventType switch
+    {
+        ActivityType.Purged => "tag-danger",
+        ActivityType.Blacklisted => "tag-danger",
+        ActivityType.Trusted => "tag-good",
+        ActivityType.Restored => "tag-good",
+        _ => "tag-neutral"
+    };
+
+    public void Dispose() => ActivityStore.Logged -= OnActivityLogged;
+}

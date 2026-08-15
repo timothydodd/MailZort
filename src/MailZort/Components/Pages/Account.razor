@@ -1,0 +1,108 @@
+@page "/account"
+@attribute [Authorize]
+@inject IUserStore Users
+@inject AuthenticationStateProvider AuthProvider
+
+<PageTitle>Account - MailZort</PageTitle>
+
+<h1>Account</h1>
+
+@if (First)
+{
+    <div class="alert warn">
+        You are signed in with the default password. Change it before this portal is reachable by anyone else.
+    </div>
+}
+
+@if (Message != null)
+{
+    <div class="alert @(IsError ? "error" : "info")">@Message</div>
+}
+
+<div class="panel">
+    <h2>Change password</h2>
+    <div class="form-grid">
+        <label>Current password<input type="password" @bind="Current" /></label>
+        <label>New password<input type="password" @bind="New" /></label>
+        <label>Repeat new password<input type="password" @bind="Repeat" /></label>
+    </div>
+    <button class="primary" @onclick="ChangePassword">Change password</button>
+</div>
+
+<div class="panel">
+    <h2>Change username</h2>
+    <div class="form-grid">
+        <label>New username<input @bind="NewUsername" /></label>
+        <label>Current password<input type="password" @bind="UsernamePassword" /></label>
+    </div>
+    <button class="primary" @onclick="ChangeUsername">Change username</button>
+    <p class="muted small">You will be signed out and will need to sign in again.</p>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "first")]
+    public string? FirstFlag { get; set; }
+
+    private bool First => !string.IsNullOrEmpty(FirstFlag);
+
+    private string Current = string.Empty, New = string.Empty, Repeat = string.Empty;
+    private string NewUsername = string.Empty, UsernamePassword = string.Empty;
+    private string? Message;
+    private bool IsError;
+    private string _user = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        _user = state.User.Identity?.Name ?? string.Empty;
+    }
+
+    private async Task ChangePassword()
+    {
+        if (New != Repeat)
+        {
+            Set("The two new passwords do not match.", true);
+            return;
+        }
+
+        if (New.Length < 6)
+        {
+            Set("Use at least 6 characters.", true);
+            return;
+        }
+
+        if (await Users.ValidateAsync(_user, Current) == null)
+        {
+            Set("Your current password is not right.", true);
+            return;
+        }
+
+        await Users.ChangePasswordAsync(_user, New);
+        Current = New = Repeat = string.Empty;
+        Set("Password changed.", false);
+    }
+
+    private async Task ChangeUsername()
+    {
+        if (string.IsNullOrWhiteSpace(NewUsername))
+        {
+            Set("Pick a username.", true);
+            return;
+        }
+
+        if (await Users.ValidateAsync(_user, UsernamePassword) == null)
+        {
+            Set("Your current password is not right.", true);
+            return;
+        }
+
+        await Users.ChangeUsernameAsync(_user, NewUsername);
+        Set($"Username is now '{NewUsername}'. Sign out and back in.", false);
+    }
+
+    private void Set(string message, bool error)
+    {
+        Message = message;
+        IsError = error;
+    }
+}

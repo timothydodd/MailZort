@@ -10,6 +10,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "configs", "configs", "{4101
 		..\.github\workflows\main.yml = ..\.github\workflows\main.yml
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RoboDodd.OrmLite", "RoboDodd.OrmLite\src\RoboDodd.OrmLite\RoboDodd.OrmLite.csproj", "{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,6 +28,14 @@ Global
 		{82FE5834-2A2E-4CCA-BC5E-97363A91BF7B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{82FE5834-2A2E-4CCA-BC5E-97363A91BF7B}.Release|x86.ActiveCfg = Release|Any CPU
 		{82FE5834-2A2E-4CCA-BC5E-97363A91BF7B}.Release|x86.Build.0 = Release|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Debug|x86.Build.0 = Debug|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Release|x86.ActiveCfg = Release|Any CPU
+		{E1D76D8A-E66B-4AF8-867E-ED2254DE9E25}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

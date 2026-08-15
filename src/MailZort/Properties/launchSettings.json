@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "MailZort": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:16558;http://localhost:16559"
+    }
+  }
+}

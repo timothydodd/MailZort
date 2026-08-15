@@ -14,13 +14,13 @@ public class RuleMatcher
     {
         if (email.IsRead && rule.ExpressionType != ExpressionType.AllEmails)
         {
-            if (DateTimeOffset.Now.Subtract(email.ReceivedDate).TotalHours < 2)
+            if (DateTimeOffset.UtcNow.Subtract(email.ReceivedDate).TotalHours < 2)
                 return false; // Grace period: don't process recently-read emails
         }
         if (rule.DaysOld <= 0)
             return true;
 
-        var emailAge = DateTimeOffset.Now.Subtract(email.ReceivedDate).TotalDays;
+        var emailAge = DateTimeOffset.UtcNow.Subtract(email.ReceivedDate).TotalDays;
         return emailAge >= rule.DaysOld;
     }
 
@@ -122,7 +122,7 @@ public class RuleMatcher
             LookIn.Subject => CheckSingleFieldContains("Subject", email.Subject, searchValue),
             LookIn.Body => CheckSingleFieldContains("Body", email.Body, searchValue),
             LookIn.Sender => CheckSingleFieldContains("Sender", email.SenderName, searchValue),
-            LookIn.Recipient => CheckSingleFieldContains("Recipient", email.From, searchValue),
+            LookIn.Recipient => CheckSingleFieldContains("Recipient", email.Recipients, searchValue),
             LookIn.SenderEmail => CheckSingleFieldContains("SenderEmail", email.SenderAddress, searchValue),
             _ => new MatchResult { IsMatch = false, MatchLocation = "Invalid LookIn value" }
         };
@@ -149,7 +149,7 @@ public class RuleMatcher
             LookIn.Subject => CheckSingleFieldExact("Subject", email.Subject, searchValue),
             LookIn.Body => CheckSingleFieldExact("Body", email.Body, searchValue),
             LookIn.Sender => CheckSingleFieldExact("Sender", email.SenderName, searchValue),
-            LookIn.Recipient => CheckSingleFieldExact("Recipient", email.From, searchValue),
+            LookIn.Recipient => CheckSingleFieldExact("Recipient", email.Recipients, searchValue),
             LookIn.SenderEmail => CheckSingleFieldExact("SenderEmail", email.SenderAddress, searchValue),
             _ => new MatchResult { IsMatch = false, MatchLocation = "Invalid LookIn value" }
         };
@@ -176,7 +176,7 @@ public class RuleMatcher
             LookIn.Subject => CheckSingleFieldStartsWith("Subject", email.Subject, searchValue),
             LookIn.Body => CheckSingleFieldStartsWith("Body", email.Body, searchValue),
             LookIn.Sender => CheckSingleFieldStartsWith("Sender", email.SenderName, searchValue),
-            LookIn.Recipient => CheckSingleFieldStartsWith("Recipient", email.From, searchValue),
+            LookIn.Recipient => CheckSingleFieldStartsWith("Recipient", email.Recipients, searchValue),
             LookIn.SenderEmail => CheckSingleFieldStartsWith("SenderEmail", email.SenderAddress, searchValue),
             _ => new MatchResult { IsMatch = false, MatchLocation = "Invalid LookIn value" }
         };
@@ -192,7 +192,7 @@ public class RuleMatcher
             LookIn.Subject => CheckSingleFieldEndsWith("Subject", email.Subject, searchValue),
             LookIn.Body => CheckSingleFieldEndsWith("Body", email.Body, searchValue),
             LookIn.Sender => CheckSingleFieldEndsWith("Sender", email.SenderName, searchValue),
-            LookIn.Recipient => CheckSingleFieldEndsWith("Recipient", email.From, searchValue),
+            LookIn.Recipient => CheckSingleFieldEndsWith("Recipient", email.Recipients, searchValue),
             LookIn.SenderEmail => CheckSingleFieldEndsWith("SenderEmail", email.SenderAddress, searchValue),
             _ => new MatchResult { IsMatch = false, MatchLocation = "Invalid LookIn value" }
         };
@@ -212,7 +212,7 @@ public class RuleMatcher
                 LookIn.Subject => CheckSingleFieldRegex("Subject", email.Subject, regex, pattern),
                 LookIn.Body => CheckSingleFieldRegex("Body", email.Body, regex, pattern),
                 LookIn.Sender => CheckSingleFieldRegex("Sender", email.SenderName, regex, pattern),
-                LookIn.Recipient => CheckSingleFieldRegex("Recipient", email.From, regex, pattern),
+                LookIn.Recipient => CheckSingleFieldRegex("Recipient", email.Recipients, regex, pattern),
                 LookIn.SenderEmail => CheckSingleFieldRegex("SenderEmail", email.SenderAddress, regex, pattern),
                 _ => new MatchResult { IsMatch = false, MatchLocation = "Invalid LookIn value" }
             };
@@ -263,11 +263,18 @@ public class RuleMatcher
             return new MatchResult { IsMatch = true, MatchLocation = "Body", MatchedText = TruncateForLogging(email.Body) };
         }
 
-        // Check Recipient
+        // Check Sender address
         if (ContainsIgnoreCase(email.From, searchValue))
         {
+            _logger.LogDebug("Contains match found in Sender for rule: {RuleId}", ruleId);
+            return new MatchResult { IsMatch = true, MatchLocation = "Sender", MatchedText = email.From };
+        }
+
+        // Check Recipient
+        if (ContainsIgnoreCase(email.Recipients, searchValue))
+        {
             _logger.LogDebug("Contains match found in Recipient for rule: {RuleId}", ruleId);
-            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.From };
+            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.Recipients };
         }
 
         return new MatchResult { IsMatch = false, MatchLocation = "No match in any field" };
@@ -281,8 +288,8 @@ public class RuleMatcher
             return new MatchResult { IsMatch = true, MatchLocation = "SenderName", MatchedText = email.SenderName };
         if (EqualsIgnoreCase(email.SenderAddress, searchValue))
             return new MatchResult { IsMatch = true, MatchLocation = "SenderAddress", MatchedText = email.SenderAddress };
-        if (EqualsIgnoreCase(email.From, searchValue))
-            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.From };
+        if (EqualsIgnoreCase(email.Recipients, searchValue) || EqualsIgnoreCase(email.From, searchValue))
+            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.Recipients };
         return new MatchResult { IsMatch = false, MatchLocation = "No exact match in any field" };
     }
 
@@ -296,8 +303,8 @@ public class RuleMatcher
             return new MatchResult { IsMatch = true, MatchLocation = "SenderAddress", MatchedText = email.SenderAddress };
         if (StartsWithIgnoreCase(email.Body, searchValue))
             return new MatchResult { IsMatch = true, MatchLocation = "Body", MatchedText = TruncateForLogging(email.Body) };
-        if (StartsWithIgnoreCase(email.From, searchValue))
-            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.From };
+        if (StartsWithIgnoreCase(email.Recipients, searchValue) || StartsWithIgnoreCase(email.From, searchValue))
+            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.Recipients };
         return new MatchResult { IsMatch = false, MatchLocation = "No starts-with match in any field" };
     }
 
@@ -311,8 +318,8 @@ public class RuleMatcher
             return new MatchResult { IsMatch = true, MatchLocation = "SenderAddress", MatchedText = email.SenderAddress };
         if (EndsWithIgnoreCase(email.Body, searchValue))
             return new MatchResult { IsMatch = true, MatchLocation = "Body", MatchedText = TruncateForLogging(email.Body) };
-        if (EndsWithIgnoreCase(email.From, searchValue))
-            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.From };
+        if (EndsWithIgnoreCase(email.Recipients, searchValue) || EndsWithIgnoreCase(email.From, searchValue))
+            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.Recipients };
         return new MatchResult { IsMatch = false, MatchLocation = "No ends-with match in any field" };
     }
 
@@ -351,11 +358,11 @@ public class RuleMatcher
         }
 
         // Check Recipient
-        if (IsRegexMatch(regex, email.From))
+        if (IsRegexMatch(regex, email.Recipients) || IsRegexMatch(regex, email.From))
         {
-            var match = regex.Match(email.From);
+            var match = regex.IsMatch(email.Recipients) ? regex.Match(email.Recipients) : regex.Match(email.From);
             _logger.LogDebug("Regex match found in Recipient for rule: {RuleId}. Matched: '{MatchedValue}'", ruleId, match.Value);
-            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.From, RegexMatch = match.Value };
+            return new MatchResult { IsMatch = true, MatchLocation = "Recipient", MatchedText = email.Recipients, RegexMatch = match.Value };
         }
 
         return new MatchResult { IsMatch = false, MatchLocation = "No regex match in any field" };

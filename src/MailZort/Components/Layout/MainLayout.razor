@@ -1,0 +1,54 @@
+@inherits LayoutComponentBase
+@inject IUserStore Users
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthProvider
+
+<AuthorizeView>
+    <Authorized>
+        <div class="shell">
+            <nav class="sidebar">
+                <div class="brand">MailZort</div>
+                <NavLink class="nav-item" href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
+                <NavLink class="nav-item" href="/activity">Activity</NavLink>
+                <NavLink class="nav-item" href="/senders">Senders</NavLink>
+                <NavLink class="nav-item" href="/rules">Rules</NavLink>
+                <NavLink class="nav-item" href="/settings">Settings</NavLink>
+                <div class="sidebar-footer">
+                    <NavLink class="nav-item" href="/account">@context.User.Identity?.Name</NavLink>
+                    <form method="post" action="/auth/logout">
+                        <button class="link-button" type="submit">Sign out</button>
+                    </form>
+                </div>
+            </nav>
+            <main class="content">
+                @Body
+            </main>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <main class="content plain">
+            @Body
+        </main>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    // The seeded admin/admin login is a real exposure, so nothing else in the portal is
+    // reachable until the password has actually been changed.
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        var username = state.User.Identity?.Name;
+        if (string.IsNullOrEmpty(username))
+            return;
+
+        if (Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("account", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var user = await Users.FindAsync(username);
+        if (user?.MustChangePassword == true)
+        {
+            Navigation.NavigateTo("/account?first=1");
+        }
+    }
+}

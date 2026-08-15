@@ -1,0 +1,124 @@
+@page "/senders"
+@attribute [Authorize]
+@inject ISenderStore SenderStore
+@inject PortalActions Actions
+@inject AuthenticationStateProvider AuthProvider
+
+<PageTitle>Senders - MailZort</PageTitle>
+
+<h1>Senders</h1>
+<p class="muted">
+    Trusted senders are skipped by every rule and pulled back out of Junk. Blacklisted senders go
+    straight to Junk. MailZort works these out by watching what you drag where - this is the override.
+</p>
+
+@if (Message != null)
+{
+    <div class="alert info">@Message</div>
+}
+
+<div class="toolbar">
+    <input placeholder="Add or search an address" @bind="Query" @bind:event="oninput" />
+    <button class="primary" @onclick="() => SetStatus(SenderStatus.Trusted)">Trust</button>
+    <button class="danger" @onclick="() => SetStatus(SenderStatus.Blacklisted)">Blacklist</button>
+    <select @bind="Filter" @bind:after="ReloadAsync">
+        <option value="">All</option>
+        <option value="1">Trusted</option>
+        <option value="2">Blacklisted</option>
+        <option value="0">Neutral</option>
+    </select>
+    <button @onclick="ReloadAsync">Search</button>
+</div>
+
+<div class="table-wrap">
+    <table class="grid">
+    <thead>
+        <tr>
+            <th>Address</th>
+            <th>Status</th>
+            <th>Rescues</th>
+            <th>Spam moves</th>
+            <th>Set by</th>
+            <th>Updated</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var sender in Rows)
+        {
+            <tr>
+                <td>@sender.Address</td>
+                <td><span class="tag @StatusClass(sender.Status)">@((SenderStatus)sender.Status)</span></td>
+                <td>@sender.Rescues</td>
+                <td>@sender.SpamMoves</td>
+                <td class="small muted">@sender.SetBy</td>
+                <td class="small muted nowrap">@sender.UpdatedUtc.ToLocalTime().ToString("g")</td>
+                <td class="actions nowrap">
+                    <button class="small" @onclick="() => Set(sender.Address, SenderStatus.Trusted)">Trust</button>
+                    <button class="small danger" @onclick="() => Set(sender.Address, SenderStatus.Blacklisted)">Block</button>
+                    <button class="small" @onclick="() => Set(sender.Address, SenderStatus.Neutral)">Reset</button>
+                    <button class="small" @onclick="() => Remove(sender.Address)">Forget</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+    </div>
+
+@if (Rows.Count == 0)
+{
+    <p class="muted">No senders match.</p>
+}
+
+@code {
+    private List<DbSender> Rows = new();
+    private string? Query;
+    private string Filter = string.Empty;
+    private string? Message;
+    private string _user = "portal";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthProvider.GetAuthenticationStateAsync();
+        _user = state.User.Identity?.Name ?? "portal";
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        SenderStatus? status = int.TryParse(Filter, out var value) ? (SenderStatus)value : null;
+        Rows = await SenderStore.SearchAsync(Query, status);
+    }
+
+    private async Task SetStatus(SenderStatus status)
+    {
+        if (string.IsNullOrWhiteSpace(Query))
+        {
+            Message = "Type an email address first.";
+            return;
+        }
+
+        Message = await Actions.SetSenderStatusAsync(Query, status, _user);
+        await ReloadAsync();
+    }
+
+    private async Task Set(string address, SenderStatus status)
+    {
+        Message = await Actions.SetSenderStatusAsync(address, status, _user);
+        await ReloadAsync();
+    }
+
+    private async Task Remove(string address)
+    {
+        await SenderStore.RemoveAsync(address);
+        Message = $"{address} forgotten - MailZort will start judging them from scratch.";
+        await ReloadAsync();
+    }
+
+    private static string StatusClass(int status) => status switch
+    {
+        (int)SenderStatus.Trusted => "tag-good",
+        (int)SenderStatus.Blacklisted => "tag-danger",
+        _ => "tag-neutral"
+    };
+}

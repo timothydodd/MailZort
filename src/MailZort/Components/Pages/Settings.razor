@@ -1,0 +1,101 @@
+@page "/settings"
+@attribute [Authorize]
+@inject ISettingsStore SettingsStore
+
+<PageTitle>Settings - MailZort</PageTitle>
+
+<h1>Settings</h1>
+<p class="muted">
+    Behaviour settings, seeded from appsettings.json on first run and edited here from then on.
+    Server, port and credentials stay in configuration.
+</p>
+
+@if (Message != null)
+{
+    <div class="alert info">@Message</div>
+}
+
+<div class="panel">
+    <h2>Sender reputation</h2>
+    <div class="form-grid">
+        <label class="checkbox"><input type="checkbox" @bind="ReputationEnabled" /> Watch folder moves and learn from them</label>
+        <label>Blacklist after this many moves back to Junk<input type="number" @bind="BlacklistThreshold" /></label>
+        <label>Only watch mail from the last (days)<input type="number" @bind="LookbackDays" /></label>
+        <label>Extra folders to watch (comma separated)<input @bind="WatchFolders" /></label>
+    </div>
+</div>
+
+<div class="panel">
+    <h2>Future-dated mail</h2>
+    <div class="form-grid">
+        <label class="checkbox"><input type="checkbox" @bind="PurgeFutureDated" /> Permanently delete mail dated in the future</label>
+        <label>Allow this much clock skew (minutes)<input type="number" @bind="FutureTolerance" /></label>
+    </div>
+    <p class="muted small">These are deleted outright, not moved to Trash. They still appear in Activity.</p>
+</div>
+
+<div class="panel">
+    <h2>Inbox cleanup</h2>
+    <div class="form-grid">
+        <label class="checkbox"><input type="checkbox" @bind="CleanupEnabled" /> Clear out old inbox mail</label>
+        <label>Older than (days)<input type="number" @bind="CleanupDays" /></label>
+        <label>Important mail goes to<input @bind="ImportantFolder" /></label>
+    </div>
+</div>
+
+<div class="panel">
+    <h2>Folders</h2>
+    <div class="form-grid">
+        <label>Junk folder<input @bind="JunkFolder" /></label>
+        <label>Trash folder<input @bind="TrashFolder" /></label>
+        <label>Keep activity history for (days)<input type="number" @bind="RetentionDays" /></label>
+    </div>
+</div>
+
+<div class="toolbar">
+    <button class="primary" @onclick="Save">Save settings</button>
+</div>
+
+@code {
+    private bool ReputationEnabled, PurgeFutureDated, CleanupEnabled;
+    private int BlacklistThreshold, LookbackDays, FutureTolerance, CleanupDays, RetentionDays;
+    private string WatchFolders = string.Empty, ImportantFolder = string.Empty,
+        JunkFolder = string.Empty, TrashFolder = string.Empty;
+    private string? Message;
+
+    protected override void OnInitialized() => Load();
+
+    private void Load()
+    {
+        ReputationEnabled = SettingsStore.GetBool(SettingKeys.SenderReputationEnabled, true);
+        BlacklistThreshold = SettingsStore.GetInt(SettingKeys.BlacklistThreshold, 2);
+        LookbackDays = SettingsStore.GetInt(SettingKeys.ReputationLookbackDays, 30);
+        WatchFolders = SettingsStore.Get(SettingKeys.ReputationWatchFolders) ?? string.Empty;
+        PurgeFutureDated = SettingsStore.GetBool(SettingKeys.PurgeFutureDatedEnabled, true);
+        FutureTolerance = SettingsStore.GetInt(SettingKeys.FutureDatedToleranceMinutes, 60);
+        CleanupEnabled = SettingsStore.GetBool(SettingKeys.InboxCleanupEnabled, true);
+        CleanupDays = SettingsStore.GetInt(SettingKeys.InboxCleanupDaysOld, 30);
+        ImportantFolder = SettingsStore.Get(SettingKeys.ImportantFolder) ?? "Important";
+        JunkFolder = SettingsStore.Get(SettingKeys.JunkFolder) ?? "Junk";
+        TrashFolder = SettingsStore.Get(SettingKeys.TrashFolder) ?? "Trash";
+        RetentionDays = SettingsStore.GetInt(SettingKeys.ActivityRetentionDays, 90);
+    }
+
+    private async Task Save()
+    {
+        await SettingsStore.SetAsync(SettingKeys.SenderReputationEnabled, ReputationEnabled.ToString());
+        await SettingsStore.SetAsync(SettingKeys.BlacklistThreshold, BlacklistThreshold.ToString());
+        await SettingsStore.SetAsync(SettingKeys.ReputationLookbackDays, LookbackDays.ToString());
+        await SettingsStore.SetAsync(SettingKeys.ReputationWatchFolders, WatchFolders);
+        await SettingsStore.SetAsync(SettingKeys.PurgeFutureDatedEnabled, PurgeFutureDated.ToString());
+        await SettingsStore.SetAsync(SettingKeys.FutureDatedToleranceMinutes, FutureTolerance.ToString());
+        await SettingsStore.SetAsync(SettingKeys.InboxCleanupEnabled, CleanupEnabled.ToString());
+        await SettingsStore.SetAsync(SettingKeys.InboxCleanupDaysOld, CleanupDays.ToString());
+        await SettingsStore.SetAsync(SettingKeys.ImportantFolder, ImportantFolder);
+        await SettingsStore.SetAsync(SettingKeys.JunkFolder, JunkFolder);
+        await SettingsStore.SetAsync(SettingKeys.TrashFolder, TrashFolder);
+        await SettingsStore.SetAsync(SettingKeys.ActivityRetentionDays, RetentionDays.ToString());
+
+        Message = "Saved. The next pass picks these up.";
+    }
+}

@@ -1,19 +1,26 @@
+using MailZort.Data;
+
 namespace MailZort.Services;
+
 public interface IBatchRuleProcessor
 {
     List<RuleTrigger> ProcessEmailBatch(List<EmailReceivedEventArgs> emails);
 }
+
 public class BatchRuleProcessor : IBatchRuleProcessor
 {
     private readonly ILogger<BatchRuleProcessor> _logger;
-    private readonly IEnumerable<Rule> _rules;
+    private readonly IRuleStore _rules;
     private readonly RuleMatcher _ruleMatcher;
+    private readonly ISenderStore _senders;
 
-    public BatchRuleProcessor(ILogger<BatchRuleProcessor> logger, List<Rule> rules, RuleMatcher ruleMatcher)
+    public BatchRuleProcessor(ILogger<BatchRuleProcessor> logger, IRuleStore rules, RuleMatcher ruleMatcher,
+        ISenderStore senders)
     {
         _logger = logger;
         _rules = rules;
         _ruleMatcher = ruleMatcher;
+        _senders = senders;
     }
 
     public List<RuleTrigger> ProcessEmailBatch(List<EmailReceivedEventArgs> emails)
@@ -25,7 +32,11 @@ public class BatchRuleProcessor : IBatchRuleProcessor
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var triggers = new List<RuleTrigger>();
-        var enabledRules = _rules.Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || r.Values?.Any() == true)).ToList();
+
+        // Read once per batch: the portal can change rules between passes.
+        var enabledRules = _rules.ActiveRules
+            .Where(r => r.IsEnabled && (r.ExpressionType == ExpressionType.AllEmails || r.Values?.Any() == true))
+            .ToList();
 
         _logger.LogDebug("Processing batch of {EmailCount} emails against {RuleCount} rules",
             emails.Count, enabledRules.Count);
@@ -50,6 +61,14 @@ public class BatchRuleProcessor : IBatchRuleProcessor
         // Skip important/flagged emails from rule processing
         if (email.IsImportant)
             return triggers;
+
+        // Senders you have rescued out of spam are exempt - their mail stays put.
+        if (_senders.IsTrusted(email.SenderAddress))
+        {
+            _logger.LogDebug("Trusted sender (skipping rules): '{Sender}' subject='{Subject}'",
+                email.SenderAddress, email.Subject);
+            return triggers;
+        }
 
         foreach (var rule in rules)
         {
@@ -79,6 +98,7 @@ public class BatchRuleProcessor : IBatchRuleProcessor
             From = email.Folder,
             To = rule.Action == RuleAction.MarkImportant ? string.Empty : rule.MoveTo ?? string.Empty,
             Action = rule.Action,
+            MessageKey = email.MessageKey,
             Email = new Email
             {
                 MessageIndex = (int)email.UniqueId.Id,
@@ -89,7 +109,8 @@ public class BatchRuleProcessor : IBatchRuleProcessor
                 SenderName = email.SenderName,
                 SenderEmailaddress = email.SenderAddress,
                 Date = email.ReceivedDate,
-                Body = email.Body
+                Body = email.Body,
+                MessageKey = email.MessageKey
             }
         };
     }
